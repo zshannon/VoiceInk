@@ -41,14 +41,14 @@ struct KeyboardShortcutsListView: View {
                     GridItem(.flexible(), spacing: 14)
                 ], spacing: 14) {
                     // Recording Hotkeys
-                    if hotkeyManager.selectedHotkey1 != .none {
+                    if !hotkeyManager.selectedHotkey1.isNone {
                         ShortcutCard(
                             icon: "mic.fill",
                             iconColor: .blue,
                             title: "Toggle Recording",
                             subtitle: "Hotkey 1"
                         ) {
-                            if hotkeyManager.selectedHotkey1 == .custom, let shortcut = toggleHotkey1 {
+                            if hotkeyManager.selectedHotkey1.isCustom, let shortcut = toggleHotkey1 {
                                 KeyboardShortcutBadge(shortcut: shortcut)
                             } else {
                                 HotkeyBadge(text: hotkeyManager.selectedHotkey1.displayName)
@@ -56,14 +56,14 @@ struct KeyboardShortcutsListView: View {
                         }
                     }
 
-                    if hotkeyManager.selectedHotkey2 != .none {
+                    if !hotkeyManager.selectedHotkey2.isNone {
                         ShortcutCard(
                             icon: "mic.fill",
                             iconColor: .purple,
                             title: "Toggle Recording",
                             subtitle: "Hotkey 2"
                         ) {
-                            if hotkeyManager.selectedHotkey2 == .custom, let shortcut = toggleHotkey2 {
+                            if hotkeyManager.selectedHotkey2.isCustom, let shortcut = toggleHotkey2 {
                                 KeyboardShortcutBadge(shortcut: shortcut)
                             } else {
                                 HotkeyBadge(text: hotkeyManager.selectedHotkey2.displayName)

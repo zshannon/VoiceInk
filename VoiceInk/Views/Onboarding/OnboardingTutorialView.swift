@@ -43,11 +43,11 @@ struct OnboardingTutorialView: View {
                                 
                             }
                             
-                            if hotkeyManager.selectedHotkey1 == .custom,
+                            if hotkeyManager.selectedHotkey1.isCustom,
                                let shortcut = KeyboardShortcuts.getShortcut(for: .toggleMiniRecorder) {
                                 KeyboardShortcutView(shortcut: shortcut)
                                     .scaleEffect(1.2)
-                            } else if hotkeyManager.selectedHotkey1 != .none && hotkeyManager.selectedHotkey1 != .custom {
+                            } else if !hotkeyManager.selectedHotkey1.isNone && !hotkeyManager.selectedHotkey1.isCustom {
                                 Text(hotkeyManager.selectedHotkey1.displayName)
                                     .font(.system(size: 24, weight: .bold, design: .rounded))
                                     .foregroundColor(.accentColor)

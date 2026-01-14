@@ -103,8 +103,8 @@ class ImportExportService {
             toggleMiniRecorderShortcut: KeyboardShortcuts.getShortcut(for: .toggleMiniRecorder),
             toggleMiniRecorderShortcut2: KeyboardShortcuts.getShortcut(for: .toggleMiniRecorder2),
             retryLastTranscriptionShortcut: KeyboardShortcuts.getShortcut(for: .retryLastTranscription),
-            selectedHotkey1RawValue: hotkeyManager.selectedHotkey1.rawValue,
-            selectedHotkey2RawValue: hotkeyManager.selectedHotkey2.rawValue,
+            selectedHotkey1RawValue: hotkeyManager.selectedHotkey1.serialized,
+            selectedHotkey2RawValue: hotkeyManager.selectedHotkey2.serialized,
             launchAtLoginEnabled: LaunchAtLogin.isEnabled,
             isMenuBarOnly: menuBarManager.isMenuBarOnly,
             useAppleScriptPaste: UserDefaults.standard.bool(forKey: keyUseAppleScriptPaste),
@@ -282,13 +282,11 @@ class ImportExportService {
                         if let retryShortcut = general.retryLastTranscriptionShortcut {
                             KeyboardShortcuts.setShortcut(retryShortcut, for: .retryLastTranscription)
                         }
-                        if let hotkeyRaw = general.selectedHotkey1RawValue,
-                           let hotkey = HotkeyManager.HotkeyOption(rawValue: hotkeyRaw) {
-                            hotkeyManager.selectedHotkey1 = hotkey
+                        if let hotkeyRaw = general.selectedHotkey1RawValue {
+                            hotkeyManager.selectedHotkey1 = HotkeyManager.HotkeyCombination(serialized: hotkeyRaw)
                         }
-                        if let hotkeyRaw2 = general.selectedHotkey2RawValue,
-                           let hotkey2 = HotkeyManager.HotkeyOption(rawValue: hotkeyRaw2) {
-                            hotkeyManager.selectedHotkey2 = hotkey2
+                        if let hotkeyRaw2 = general.selectedHotkey2RawValue {
+                            hotkeyManager.selectedHotkey2 = HotkeyManager.HotkeyCombination(serialized: hotkeyRaw2)
                         }
                         if let launch = general.launchAtLoginEnabled {
                             LaunchAtLogin.isEnabled = launch

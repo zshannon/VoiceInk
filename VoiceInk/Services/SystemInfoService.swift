@@ -117,6 +117,12 @@ class SystemInfoService {
     }
 
     private func getPrimaryHotkey() -> String {
+        // Try new format first
+        if let data = UserDefaults.standard.data(forKey: "selectedHotkey1Data"),
+           let combination = try? JSONDecoder().decode(HotkeyManager.HotkeyCombination.self, from: data) {
+            return combination.displayName
+        }
+        // Fall back to old format
         if let hotkeyRaw = UserDefaults.standard.string(forKey: "selectedHotkey1"),
            let hotkey = HotkeyManager.HotkeyOption(rawValue: hotkeyRaw) {
             return hotkey.displayName
@@ -125,6 +131,12 @@ class SystemInfoService {
     }
 
     private func getSecondaryHotkey() -> String {
+        // Try new format first
+        if let data = UserDefaults.standard.data(forKey: "selectedHotkey2Data"),
+           let combination = try? JSONDecoder().decode(HotkeyManager.HotkeyCombination.self, from: data) {
+            return combination.displayName
+        }
+        // Fall back to old format
         if let hotkeyRaw = UserDefaults.standard.string(forKey: "selectedHotkey2"),
            let hotkey = HotkeyManager.HotkeyOption(rawValue: hotkeyRaw) {
             return hotkey.displayName

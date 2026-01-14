@@ -40,7 +40,7 @@ struct SettingsView: View {
                             shortcutName: .toggleMiniRecorder
                         )
 
-                        if hotkeyManager.selectedHotkey2 != .none {
+                        if !hotkeyManager.selectedHotkey2.isNone {
                             Divider()
                             hotkeyView(
                                 title: "Hotkey 2",
@@ -53,11 +53,11 @@ struct SettingsView: View {
                             )
                         }
 
-                        if hotkeyManager.selectedHotkey1 != .none && hotkeyManager.selectedHotkey2 == .none {
+                        if !hotkeyManager.selectedHotkey1.isNone && hotkeyManager.selectedHotkey2.isNone {
                             HStack {
                                 Spacer()
                                 Button(action: {
-                                    withAnimation { hotkeyManager.selectedHotkey2 = .rightOption }
+                                    withAnimation { hotkeyManager.selectedHotkey2 = HotkeyManager.HotkeyCombination(.rightOption) }
                                 }) {
                                     Label("Add another hotkey", systemImage: "plus.circle.fill")
                                 }
@@ -446,7 +446,7 @@ struct SettingsView: View {
     @ViewBuilder
     private func hotkeyView(
         title: String,
-        binding: Binding<HotkeyManager.HotkeyOption>,
+        binding: Binding<HotkeyManager.HotkeyCombination>,
         shortcutName: KeyboardShortcuts.Name,
         isRemovable: Bool = false,
         onRemove: (() -> Void)? = nil
@@ -455,47 +455,16 @@ struct SettingsView: View {
             Text(title)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.secondary)
-            
-            Menu {
-                ForEach(HotkeyManager.HotkeyOption.allCases, id: \.self) { option in
-                    Button(action: {
-                        binding.wrappedValue = option
-                    }) {
-                        HStack {
-                            Text(option.displayName)
-                            if binding.wrappedValue == option {
-                                Spacer()
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Text(binding.wrappedValue.displayName)
-                        .foregroundColor(.primary)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color(NSColor.controlBackgroundColor))
-                .cornerRadius(6)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                )
-            }
-            .menuStyle(.borderlessButton)
-            
-            if binding.wrappedValue == .custom {
+
+            ModifierKeyPicker(combination: binding)
+
+            if binding.wrappedValue.isCustom {
                 KeyboardShortcuts.Recorder(for: shortcutName)
                     .controlSize(.small)
             }
-            
+
             Spacer()
-            
+
             if isRemovable {
                 Button(action: {
                     onRemove?()
@@ -505,6 +474,81 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+}
+
+struct ModifierKeyPicker: View {
+    @Binding var combination: HotkeyManager.HotkeyCombination
+    @State private var showingPopover = false
+
+    private var modifierOptions: [HotkeyManager.HotkeyOption] {
+        HotkeyManager.HotkeyOption.allCases.filter { $0.isModifierKey }
+    }
+
+    var body: some View {
+        Button(action: { showingPopover.toggle() }) {
+            HStack(spacing: 8) {
+                Text(combination.displayName)
+                    .foregroundColor(.primary)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Select Modifier Keys")
+                    .font(.headline)
+                    .padding(.bottom, 4)
+
+                ForEach(modifierOptions, id: \.self) { option in
+                    Toggle(isOn: Binding(
+                        get: { combination.keys.contains(option) },
+                        set: { isOn in
+                            var newKeys = combination.keys.filter { $0.isModifierKey }
+                            if isOn {
+                                newKeys.insert(option)
+                            } else {
+                                newKeys.remove(option)
+                            }
+                            // If no keys selected, set to none
+                            if newKeys.isEmpty {
+                                combination = .none
+                            } else {
+                                combination = HotkeyManager.HotkeyCombination(keys: newKeys)
+                            }
+                        }
+                    )) {
+                        Text(option.displayName)
+                    }
+                }
+
+                Divider()
+
+                Button("None") {
+                    combination = .none
+                    showingPopover = false
+                }
+                .foregroundColor(.secondary)
+
+                Button("Custom Shortcut") {
+                    combination = HotkeyManager.HotkeyCombination(.custom)
+                    showingPopover = false
+                }
+                .foregroundColor(.secondary)
+            }
+            .padding()
+            .frame(minWidth: 200)
         }
     }
 }

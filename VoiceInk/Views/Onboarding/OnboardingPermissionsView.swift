@@ -454,24 +454,24 @@ struct OnboardingPermissionsView: View {
 
     @ViewBuilder
     private func hotkeyView(
-        binding: Binding<HotkeyManager.HotkeyOption>,
+        binding: Binding<HotkeyManager.HotkeyCombination>,
         shortcutName: KeyboardShortcuts.Name,
         onConfigured: @escaping (Bool) -> Void
     ) -> some View {
         VStack(spacing: 16) {
             styledPicker(
                 label: "Shortcut:",
-                selectedValue: binding.wrappedValue,
+                selectedValue: binding.wrappedValue.keys.first ?? .none,
                 displayValue: binding.wrappedValue.displayName,
                 options: HotkeyManager.HotkeyOption.allCases.filter { $0 != .none && $0 != .custom },
                 optionDisplayName: { $0.displayName },
                 onSelection: { option in
-                    binding.wrappedValue = option
+                    binding.wrappedValue = HotkeyManager.HotkeyCombination(option)
                     onConfigured(option.isModifierKey)
                 }
             )
 
-            if binding.wrappedValue == .custom {
+            if binding.wrappedValue.isCustom {
                 KeyboardShortcuts.Recorder(for: shortcutName) { newShortcut in
                     onConfigured(newShortcut != nil)
                 }
@@ -479,7 +479,7 @@ struct OnboardingPermissionsView: View {
             }
         }
         .onChange(of: binding.wrappedValue) { newValue in
-            onConfigured(newValue != .none)
+            onConfigured(!newValue.isNone)
         }
     }
 }
