@@ -405,6 +405,7 @@ struct PowerModeSection: View {
     @State private var showDisableAlert = false
     @State private var isExpanded = false
 
+
     var body: some View {
         Section {
             ExpandableSettingsRow(

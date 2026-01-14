@@ -399,9 +399,13 @@ class UpdaterViewModel: ObservableObject {
     @Published var automaticallyChecksForUpdates = false
 
     init() {
-        updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        // Disabled for local development - set startingUpdater to true to re-enable
+        updaterController = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil)
 
-        automaticallyChecksForUpdates = updaterController.updater.automaticallyChecksForUpdates
+        // Disable automatic update checking for local development
+        updaterController.updater.automaticallyChecksForUpdates = false
+        updaterController.updater.updateCheckInterval = 24 * 60 * 60
+
 
         updaterController.updater.publisher(for: \.canCheckForUpdates)
             .assign(to: &$canCheckForUpdates)

@@ -10,7 +10,8 @@ class LicenseViewModel: ObservableObject {
         case licensed
     }
 
-    @Published private(set) var licenseState: LicenseState = .trial(daysRemaining: 7)  // Default to trial
+    // MARK: - Licensing disabled for local development
+    @Published private(set) var licenseState: LicenseState = .licensed
     @Published var licenseKey: String = ""
     @Published var isValidating = false
     @Published var validationMessage: String?
@@ -24,11 +25,8 @@ class LicenseViewModel: ObservableObject {
     private let licenseManager = LicenseManager.shared
 
     init() {
-        #if LOCAL_BUILD
+        // Licensing disabled for local development - always licensed
         licenseState = .licensed
-        #else
-        loadLicenseState()
-        #endif
     }
 
     func startTrial() {
