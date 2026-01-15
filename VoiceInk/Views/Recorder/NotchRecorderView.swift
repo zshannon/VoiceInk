@@ -31,23 +31,7 @@ struct NotchRecorderView: View {
     }
     
     private var leftSection: some View {
-        HStack(spacing: 12) {
-            RecorderPromptButton(
-                activePopover: $activePopover,
-                buttonSize: 22,
-                padding: EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
-            )
-
-            RecorderPowerModeButton(
-                activePopover: $activePopover,
-                buttonSize: 22,
-                padding: EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
-            )
-
-            Spacer()
-        }
-        .frame(width: 64)
-        .padding(.leading, 16)
+        EmptyView()
     }
     
     private var centerSection: some View {
@@ -62,8 +46,8 @@ struct NotchRecorderView: View {
             Spacer()
             statusDisplay
         }
-        .frame(width: 64)
-        .padding(.trailing, 16)
+        .frame(width: 35)
+        .padding(.trailing, 8)
     }
     
     private var statusDisplay: some View {
@@ -72,7 +56,7 @@ struct NotchRecorderView: View {
             audioMeter: recorder.audioMeter,
             menuBarHeight: menuBarHeight
         )
-        .frame(width: 70)
+        .frame(width: 35)
         .padding(.trailing, 8)
     }
     
