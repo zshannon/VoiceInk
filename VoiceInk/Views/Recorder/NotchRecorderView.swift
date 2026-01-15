@@ -30,55 +30,39 @@ struct NotchRecorderView: View {
         return 200
     }
     
-    private var leftSection: some View {
-        EmptyView()
-    }
-    
     private var centerSection: some View {
         Rectangle()
             .fill(Color.clear)
             .frame(width: exactNotchWidth)
             .contentShape(Rectangle())
     }
-    
+
     private var rightSection: some View {
-        HStack(spacing: 8) {
-            Spacer()
-            statusDisplay
-        }
-        .frame(width: 35)
-        .padding(.trailing, 8)
-    }
-    
-    private var statusDisplay: some View {
         RecorderStatusDisplay(
             currentState: whisperState.recordingState,
             audioMeter: recorder.audioMeter,
             menuBarHeight: menuBarHeight
         )
-        .frame(width: 35)
+        .frame(width: 50)
+        .padding(.leading, 0)
         .padding(.trailing, 8)
     }
-    
+
     var body: some View {
-        Group {
-            if windowManager.isVisible {
-                HStack(spacing: 0) {
-                    leftSection
-                    centerSection
-                    rightSection
-                }
-                .frame(height: menuBarHeight)
-                .background(Color.black)
-                .mask {
-                    NotchShape(cornerRadius: 10)
-                }
-                .clipped()
-                .onHover { hovering in
-                    isHovering = hovering
-                }
-                .opacity(windowManager.isVisible ? 1 : 0)
-            }
+        HStack(spacing: 0) {
+            centerSection
+            rightSection
         }
+        .frame(height: menuBarHeight)
+        .background(Color.black)
+        .mask {
+            NotchShape(cornerRadius: 10)
+        }
+        .clipped()
+        .onHover { hovering in
+            isHovering = hovering
+        }
+        .opacity(windowManager.isVisible ? 1 : 0)
+        .animation(.interactiveSpring, value: windowManager.isVisible)
     }
 }

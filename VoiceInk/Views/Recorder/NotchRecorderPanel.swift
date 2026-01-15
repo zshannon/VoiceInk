@@ -13,7 +13,7 @@ class NotchRecorderPanel: KeyablePanel {
     private var notchMetrics: (width: CGFloat, height: CGFloat) {
         if let screen = NSScreen.main {
             let safeAreaInsets = screen.safeAreaInsets
-            
+
             // Simplified height calculation - matching calculateWindowMetrics
             let notchHeight: CGFloat
             if safeAreaInsets.top > 0 {
@@ -23,19 +23,17 @@ class NotchRecorderPanel: KeyablePanel {
                 // For external displays or non-notched MacBooks, use system menu bar height
                 notchHeight = NSStatusBar.system.thickness
             }
-            
+
             // Get actual notch width from safe area insets
             let baseNotchWidth: CGFloat = safeAreaInsets.left > 0 ? safeAreaInsets.left * 2 : 200
-            
-            // Calculate total width including controls and padding
-            // 16pt padding on each side + space for controls
-            let controlsWidth: CGFloat = 64 // Space for buttons on each side (increased width)
-            let paddingWidth: CGFloat = 32 // 16pt on each side
-            let totalWidth = baseNotchWidth + controlsWidth * 2 + paddingWidth
-            
+
+            // Asymmetric layout - only right side control
+            let rightControlWidth: CGFloat = 58 // 50 width + 0 left padding + 8 right padding
+            let totalWidth = baseNotchWidth + rightControlWidth
+
             return (totalWidth, notchHeight)
         }
-        return (280, 24)  // Increased fallback width
+        return (280, 24)  // Fallback width
     }
     
     init(contentRect: NSRect) {
@@ -82,9 +80,9 @@ class NotchRecorderPanel: KeyablePanel {
         guard let screen = NSScreen.main else {
             return (NSRect(x: 0, y: 0, width: 280, height: 24), 280, 24)
         }
-        
+
         let safeAreaInsets = screen.safeAreaInsets
-        
+
         // Simplified height calculation
         let notchHeight: CGFloat
         if safeAreaInsets.top > 0 {
@@ -94,26 +92,25 @@ class NotchRecorderPanel: KeyablePanel {
             // For external displays or non-notched MacBooks, use system menu bar height
             notchHeight = NSStatusBar.system.thickness
         }
-        
+
         // Calculate exact notch width
         let baseNotchWidth: CGFloat = safeAreaInsets.left > 0 ? safeAreaInsets.left * 2 : 200
-        
-        // Calculate total width including controls and padding
-        let controlsWidth: CGFloat = 64 // Space for buttons on each side (increased width)
-        let paddingWidth: CGFloat = 32 // 16pt on each side
-        let totalWidth = baseNotchWidth + controlsWidth * 2 + paddingWidth
-        
-        // Position exactly at the center
-        let xPosition = screen.frame.midX - (totalWidth / 2)
+
+        // Asymmetric layout - only extends to the right of the notch
+        let rightControlWidth: CGFloat = 58 // 50 width + 0 left padding + 8 right padding
+        let totalWidth = baseNotchWidth + rightControlWidth
+
+        // Position window so left NotchShape curves (topCornerRadius + bottomCornerRadius = 15px) are hidden behind physical notch
+        let xPosition = screen.frame.midX - (baseNotchWidth / 2) + 15
         let yPosition = screen.frame.maxY - notchHeight
-        
+
         let frame = NSRect(
             x: xPosition,
             y: yPosition,
             width: totalWidth,
             height: notchHeight
         )
-        
+
         return (frame, baseNotchWidth, notchHeight)
     }
     

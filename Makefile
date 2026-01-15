@@ -1,5 +1,5 @@
-# Define a directory for dependencies in the user's home folder
-DEPS_DIR := $(HOME)/VoiceInk-Dependencies
+# Define a directory for dependencies in the project
+DEPS_DIR := .deps
 WHISPER_CPP_DIR := $(DEPS_DIR)/whisper.cpp
 FRAMEWORK_PATH := $(WHISPER_CPP_DIR)/build-apple/whisper.xcframework
 
@@ -11,7 +11,7 @@ APP_PATH := $(EXPORT_PATH)/VoiceInk.app
 TEAM_ID := NRD52JHX45
 KEYCHAIN_PROFILE := AC_PASSWORD
 
-.PHONY: all clean whisper setup build check healthcheck help dev run archive export notarize dmg release
+.PHONY: all clean whisper setup build check healthcheck help dev run archive export notarize dmg release sparkle-sign upload-r2 upload-appcast publish bump
 
 # Default target
 all: check build
@@ -82,6 +82,7 @@ archive: setup
 		-scheme VoiceInk \
 		-configuration Release \
 		-archivePath $(ARCHIVE_PATH) \
+		-allowProvisioningUpdates \
 		archive
 
 export: archive
@@ -137,6 +138,51 @@ release: dmg
 	@echo "Release build complete!"
 	@ls -la $(BUILD_DIR)/*.dmg
 
+# Sparkle signing and R2 upload
+sparkle-sign:
+	@echo "Signing DMG with Sparkle..."
+	$(eval VERSION := $(shell /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$(APP_PATH)/Contents/Info.plist"))
+	$(eval DMG_FILE := $(BUILD_DIR)/VoiceInk-$(VERSION).dmg)
+	@op run --env-file .env.op -- sh -c 'echo "$$SPARKLE_PRIVATE_KEY" | ./bin/sign_update -f - -p "$(DMG_FILE)"' > $(BUILD_DIR)/sparkle-signature.txt
+	@echo "Sparkle signature saved to $(BUILD_DIR)/sparkle-signature.txt"
+
+upload-r2: sparkle-sign
+	@echo "Uploading DMG to R2..."
+	$(eval VERSION := $(shell /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$(APP_PATH)/Contents/Info.plist"))
+	$(eval DMG_FILE := $(BUILD_DIR)/VoiceInk-$(VERSION).dmg)
+	op run --env-file .env.op -- bash -c 'curl -s -X PUT "https://$$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com/$$R2_BUCKET_NAME/VoiceInk-$(VERSION).dmg" \
+		--aws-sigv4 "aws:amz:auto:s3" -u "$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY" \
+		-H "Content-Type: application/octet-stream" --data-binary @"$(DMG_FILE)"'
+	@echo "DMG uploaded to R2"
+
+upload-appcast: upload-r2
+	@echo "Generating and uploading appcast.xml..."
+	$(eval VERSION := $(shell /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$(APP_PATH)/Contents/Info.plist"))
+	$(eval BUILD_NUM := $(shell /usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$(APP_PATH)/Contents/Info.plist"))
+	$(eval DMG_FILE := $(BUILD_DIR)/VoiceInk-$(VERSION).dmg)
+	$(eval DMG_SIZE := $(shell stat -f%z "$(DMG_FILE)"))
+	$(eval SIGNATURE := $(shell cat $(BUILD_DIR)/sparkle-signature.txt))
+	$(eval PUB_DATE := $(shell date -R))
+	@op run --env-file .env.op -- sh -c 'printf "<?xml version=\"1.0\" standalone=\"yes\"?>\n<rss xmlns:sparkle=\"http://www.andymatuschak.org/xml-namespaces/sparkle\" version=\"2.0\">\n    <channel>\n        <title>VoiceInk</title>\n        <item>\n            <title>$(VERSION)</title>\n            <pubDate>$(PUB_DATE)</pubDate>\n            <sparkle:version>$(BUILD_NUM)</sparkle:version>\n            <sparkle:shortVersionString>$(VERSION)</sparkle:shortVersionString>\n            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>\n            <enclosure url=\"%sVoiceInk-$(VERSION).dmg\" length=\"$(DMG_SIZE)\" type=\"application/octet-stream\" sparkle:edSignature=\"$(SIGNATURE)\"/>\n        </item>\n    </channel>\n</rss>\n" "$$R2_PUBLIC_URL/" > $(BUILD_DIR)/appcast.xml'
+	op run --env-file .env.op -- bash -c 'curl -s -X PUT "https://$$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com/$$R2_BUCKET_NAME/appcast.xml" \
+		--aws-sigv4 "aws:amz:auto:s3" -u "$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY" \
+		-H "Content-Type: application/xml" --data-binary @"$(BUILD_DIR)/appcast.xml"'
+	@echo "Appcast uploaded to R2"
+
+publish: upload-appcast
+	@echo "Release published to R2!"
+	@op run --env-file .env.op -- sh -c 'echo "DMG: $$R2_PUBLIC_URL/VoiceInk-$(VERSION).dmg"'
+	@op run --env-file .env.op -- sh -c 'echo "Appcast: $$R2_PUBLIC_URL/appcast.xml"'
+
+# Version management
+bump:
+	$(eval CURRENT := $(shell grep -m1 'MARKETING_VERSION = ' VoiceInk.xcodeproj/project.pbxproj | sed 's/.*= \(.*\);/\1/'))
+	$(eval NEW := $(shell echo "$(CURRENT) + 0.01" | bc))
+	$(eval NEW_BUILD := $(shell echo "$(NEW) * 100" | bc | cut -d. -f1))
+	@sed -i '' 's/MARKETING_VERSION = $(CURRENT);/MARKETING_VERSION = $(NEW);/g' VoiceInk.xcodeproj/project.pbxproj
+	@sed -i '' 's/CURRENT_PROJECT_VERSION = [0-9]*;/CURRENT_PROJECT_VERSION = $(NEW_BUILD);/g' VoiceInk.xcodeproj/project.pbxproj
+	@echo "Bumped version: $(CURRENT) -> $(NEW) (build $(NEW_BUILD))"
+
 # Help
 help:
 	@echo "Available targets:"
@@ -156,6 +202,13 @@ help:
 	@echo "  notarize           Submit to Apple and staple ticket"
 	@echo "  dmg                Create signed DMG"
 	@echo "  release            Full distribution build (archive->export->notarize->dmg)"
+	@echo ""
+	@echo "Publishing (requires .env.op with 1Password refs):"
+	@echo "  bump               Bump version number (1.70 -> 1.71)"
+	@echo "  sparkle-sign       Sign DMG with Sparkle EdDSA key"
+	@echo "  upload-r2          Upload DMG to Cloudflare R2"
+	@echo "  upload-appcast     Generate and upload appcast.xml to R2"
+	@echo "  publish            Full publish (dmg->sign->upload->appcast)"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  clean              Remove dependencies"

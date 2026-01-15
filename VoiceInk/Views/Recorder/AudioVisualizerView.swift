@@ -115,15 +115,7 @@ struct ProcessingStatusDisplay: View {
     }
 
     var body: some View {
-        VStack(spacing: 4) {
-            Text(label)
-                .foregroundColor(color)
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-
-            ProgressAnimation(color: color, animationSpeed: animationSpeed)
-        }
-        .frame(height: 28) // Match AudioVisualizer maxHeight for no layout shift
+        ProgressAnimation(color: color, animationSpeed: animationSpeed)
+            .frame(height: 28) // Match AudioVisualizer maxHeight for no layout shift
     }
 }
