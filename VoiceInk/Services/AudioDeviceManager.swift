@@ -522,5 +522,12 @@ class AudioDeviceManager: ObservableObject {
     
     private func notifyDeviceChange() {
         NotificationCenter.default.post(name: NSNotification.Name("AudioDeviceChanged"), object: nil)
+
+        // Invalidate pre-warmed AudioUnit since device changed, then re-warm for new device
+        AudioUnitPool.shared.invalidate()
+        let newDeviceID = getCurrentDevice()
+        if newDeviceID != 0 {
+            AudioUnitPool.shared.scheduleRewarm(forDevice: newDeviceID)
+        }
     }
 } 

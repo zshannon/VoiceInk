@@ -111,6 +111,7 @@ class Recorder: NSObject, ObservableObject {
 
         let currentDeviceID = deviceManager.getCurrentDevice()
         let lastDeviceID = UserDefaults.standard.string(forKey: "lastUsedMicrophoneDeviceID")
+
         if String(currentDeviceID) != lastDeviceID {
             if let deviceName = deviceManager.availableDevices.first(where: { $0.id == currentDeviceID })?.name {
                 NotificationManager.shared.showNotification(title: "Using: \(deviceName)", type: .info)
@@ -129,11 +130,19 @@ class Recorder: NSObject, ObservableObject {
         recorder = coreAudioRecorder
 
         do {
+            // Try to get a pre-warmed AudioUnit for faster startup
+            let warmData = AudioUnitPool.shared.claimWarmUnit(forDevice: deviceID)
+
             // Offload initialization to avoid shortcut lag.
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 audioSetupQueue.async {
                     do {
-                        try coreAudioRecorder.startRecording(toOutputFile: url, deviceID: deviceID)
+                        try coreAudioRecorder.startRecording(
+                            toOutputFile: url,
+                            deviceID: deviceID,
+                            warmUnit: warmData?.unit,
+                            warmFormat: warmData?.format
+                        )
                         continuation.resume()
                     } catch {
                         continuation.resume(throwing: error)
@@ -185,6 +194,10 @@ class Recorder: NSObject, ObservableObject {
             await playbackController.resumeMedia()
         }
         deviceManager.isRecordingActive = false
+
+        // Schedule re-warming the AudioUnit for faster next recording
+        let deviceID = deviceManager.getCurrentDevice()
+        AudioUnitPool.shared.scheduleRewarm(forDevice: deviceID)
     }
 
     private func handleRecordingError(_ error: Error) async {
