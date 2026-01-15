@@ -128,6 +128,14 @@ class WhisperState: NSObject, ObservableObject {
         loadAvailableModels()
         loadCurrentTranscriptionModel()
         refreshAllAvailableModels()
+
+        // Pre-warm the AudioUnit for faster recording startup
+        let deviceID = AudioDeviceManager.shared.getCurrentDevice()
+        if deviceID != 0 {
+            DispatchQueue.global(qos: .userInitiated).async {
+                AudioUnitPool.shared.warmUp(forDevice: deviceID)
+            }
+        }
     }
     
     private func createRecordingsDirectoryIfNeeded() {

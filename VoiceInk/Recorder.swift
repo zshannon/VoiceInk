@@ -103,10 +103,10 @@ class Recorder: NSObject, ObservableObject {
 
     func startRecording(toOutputFile url: URL) async throws {
         deviceManager.isRecordingActive = true
-        
+
         let currentDeviceID = deviceManager.getCurrentDevice()
         let lastDeviceID = UserDefaults.standard.string(forKey: "lastUsedMicrophoneDeviceID")
-        
+
         if String(currentDeviceID) != lastDeviceID {
             if let deviceName = deviceManager.availableDevices.first(where: { $0.id == currentDeviceID })?.name {
                 await MainActor.run {
@@ -118,7 +118,7 @@ class Recorder: NSObject, ObservableObject {
             }
         }
         UserDefaults.standard.set(String(currentDeviceID), forKey: "lastUsedMicrophoneDeviceID")
-        
+
         hasDetectedAudioInCurrentSession = false
 
         let deviceID = deviceManager.getCurrentDevice()
@@ -127,7 +127,15 @@ class Recorder: NSObject, ObservableObject {
             let coreAudioRecorder = CoreAudioRecorder()
             recorder = coreAudioRecorder
 
-            try coreAudioRecorder.startRecording(toOutputFile: url, deviceID: deviceID)
+            // Try to get a pre-warmed AudioUnit for faster startup
+            let warmData = AudioUnitPool.shared.claimWarmUnit(forDevice: deviceID)
+
+            try coreAudioRecorder.startRecording(
+                toOutputFile: url,
+                deviceID: deviceID,
+                warmUnit: warmData?.unit,
+                warmFormat: warmData?.format
+            )
 
             audioRestorationTask?.cancel()
             audioRestorationTask = nil
@@ -188,6 +196,10 @@ class Recorder: NSObject, ObservableObject {
             await playbackController.resumeMedia()
         }
         deviceManager.isRecordingActive = false
+
+        // Schedule re-warming the AudioUnit for faster next recording
+        let deviceID = deviceManager.getCurrentDevice()
+        AudioUnitPool.shared.scheduleRewarm(forDevice: deviceID)
     }
 
     private func handleRecordingError(_ error: Error) async {

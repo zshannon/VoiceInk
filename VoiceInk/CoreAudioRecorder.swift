@@ -59,7 +59,17 @@ final class CoreAudioRecorder {
     // MARK: - Public Interface
 
     /// Starts recording from the specified device to the given URL (WAV format)
-    func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID) throws {
+    /// - Parameters:
+    ///   - url: Output file URL for the recording
+    ///   - deviceID: Audio device to record from
+    ///   - warmUnit: Optional pre-warmed AudioUnit from AudioUnitPool (skips slow initialization)
+    ///   - warmFormat: Device format from the warm unit (required if warmUnit is provided)
+    func startRecording(
+        toOutputFile url: URL,
+        deviceID: AudioDeviceID,
+        warmUnit: AudioUnit? = nil,
+        warmFormat: AudioStreamBasicDescription? = nil
+    ) throws {
         // Stop any existing recording
         stopRecording()
 
@@ -80,23 +90,69 @@ final class CoreAudioRecorder {
         logger.notice("🎙️ Starting recording from device \(deviceID)")
         logDeviceDetails(deviceID: deviceID)
 
-        // Step 1: Create and configure the AudioUnit (AUHAL)
-        try createAudioUnit()
+        if let warmUnit = warmUnit, let warmFormat = warmFormat {
+            // Fast path: use pre-warmed AudioUnit (skips ~1-2 seconds of initialization)
+            logger.notice("🚀 Using pre-warmed AudioUnit for fast startup")
+            self.audioUnit = warmUnit
+            self.deviceFormat = warmFormat
 
-        // Step 2: Set the input device (does NOT change system default)
-        try setInputDevice(deviceID)
+            // Configure output format (16kHz mono for transcription)
+            outputFormat = AudioStreamBasicDescription(
+                mSampleRate: 16000.0,
+                mFormatID: kAudioFormatLinearPCM,
+                mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+                mBytesPerPacket: 2,
+                mFramesPerPacket: 1,
+                mBytesPerFrame: 2,
+                mChannelsPerFrame: 1,
+                mBitsPerChannel: 16,
+                mReserved: 0
+            )
 
-        // Step 3: Configure formats
-        try configureFormats()
+            // Allocate buffers
+            let maxFrames: UInt32 = 4096
+            let bufferSamples = maxFrames * deviceFormat.mChannelsPerFrame
+            renderBuffer = UnsafeMutablePointer<Float32>.allocate(capacity: Int(bufferSamples))
+            renderBufferSize = bufferSamples
 
-        // Step 4: Set up the input callback
-        try setupInputCallback()
+            let maxOutputFrames = UInt32(Double(maxFrames) * (outputFormat.mSampleRate / deviceFormat.mSampleRate)) + 1
+            conversionBuffer = UnsafeMutablePointer<Int16>.allocate(capacity: Int(maxOutputFrames))
+            conversionBufferSize = maxOutputFrames
 
-        // Step 5: Create the output file
-        try createOutputFile(at: url)
+            // Set up input callback
+            try setupInputCallback()
 
-        // Step 6: Initialize and start the AudioUnit
-        try startAudioUnit()
+            // Create output file
+            try createOutputFile(at: url)
+
+            // Start the already-initialized AudioUnit (fast!)
+            let status = AudioOutputUnitStart(warmUnit)
+            if status != noErr {
+                logger.error("Failed to start warm AudioUnit: \(status)")
+                throw CoreAudioRecorderError.failedToStart(status: status)
+            }
+        } else {
+            // Slow path: create and initialize from scratch
+            logger.notice("⏳ No warm AudioUnit available, using cold start")
+
+            // Step 1: Create and configure the AudioUnit (AUHAL)
+            try createAudioUnit()
+
+            // Step 2: Set the input device (does NOT change system default)
+            try setInputDevice(deviceID)
+
+            // Step 3: Configure formats
+            try configureFormats()
+
+            // Step 4: Set up the input callback
+            try setupInputCallback()
+
+            // Step 5: Create the output file
+            try createOutputFile(at: url)
+
+            // Step 6: Initialize and start the AudioUnit
+            try startAudioUnit()
+        }
 
         isRecording = true
     }
