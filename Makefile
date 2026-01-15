@@ -119,10 +119,15 @@ dmg: notarize
 	@echo "Creating DMG..."
 	$(eval VERSION := $(shell /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$(APP_PATH)/Contents/Info.plist"))
 	@rm -f $(BUILD_DIR)/VoiceInk-$(VERSION).dmg
+	@rm -rf $(BUILD_DIR)/dmg-staging
+	@mkdir -p $(BUILD_DIR)/dmg-staging
+	@cp -R $(APP_PATH) $(BUILD_DIR)/dmg-staging/
+	@ln -s /Applications $(BUILD_DIR)/dmg-staging/Applications
 	hdiutil create -volname "VoiceInk" \
-		-srcfolder $(APP_PATH) \
+		-srcfolder $(BUILD_DIR)/dmg-staging \
 		-ov -format UDZO \
 		$(BUILD_DIR)/VoiceInk-$(VERSION).dmg
+	@rm -rf $(BUILD_DIR)/dmg-staging
 	@echo "Signing DMG..."
 	codesign --force --sign "555066E4A3E7123BE9E073B0A7E3AE1F355669A1" \
 		$(BUILD_DIR)/VoiceInk-$(VERSION).dmg
