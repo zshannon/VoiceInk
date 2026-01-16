@@ -86,6 +86,7 @@ local: check setup
 
 # Run application
 run:
+	@pkill -x VoiceInk 2>/dev/null || true
 	@if [ -d "$$HOME/Downloads/VoiceInk.app" ]; then \
 		echo "Opening ~/Downloads/VoiceInk.app..."; \
 		open "$$HOME/Downloads/VoiceInk.app"; \
