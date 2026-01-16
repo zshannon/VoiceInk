@@ -53,10 +53,10 @@ build: setup
 
 # Run application
 run:
-	@echo "Looking for VoiceInk.app..."
-	@APP_PATH=$$(find "$$HOME/Library/Developer/Xcode/DerivedData" -name "VoiceInk.app" -type d | head -1) && \
-	if [ -n "$$APP_PATH" ]; then \
-		echo "Found app at: $$APP_PATH"; \
+	@pkill -x VoiceInk 2>/dev/null || true
+	@APP_PATH=$$(xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -showBuildSettings 2>/dev/null | grep "BUILT_PRODUCTS_DIR" | head -1 | awk '{print $$3}')/VoiceInk.app && \
+	if [ -d "$$APP_PATH" ]; then \
+		echo "Launching $$APP_PATH"; \
 		open "$$APP_PATH"; \
 	else \
 		echo "VoiceInk.app not found. Please run 'make build' first."; \
