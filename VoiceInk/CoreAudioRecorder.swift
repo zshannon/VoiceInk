@@ -48,6 +48,9 @@ final class CoreAudioRecorder {
     private var renderBuffer: UnsafeMutablePointer<Float32>?
     private var renderBufferSize: UInt32 = 0
 
+    /// Called on the audio thread with raw PCM data (16-bit, 16kHz, mono) for streaming.
+    var onAudioChunk: ((_ data: Data) -> Void)?
+
     // MARK: - Initialization
 
     init() {}
@@ -159,7 +162,11 @@ final class CoreAudioRecorder {
 
     /// Stops the current recording
     func stopRecording() {
-        guard isRecording || audioUnit != nil else { return }
+        guard isRecording || audioUnit != nil else {
+            logger.notice("stopRecording: skipped, not recording and no audio unit")
+            return
+        }
+        logger.notice("stopRecording: stopping core audio recorder")
 
         // Stop and dispose AudioUnit
         if let unit = audioUnit {
@@ -751,6 +758,13 @@ final class CoreAudioRecorder {
         let writeStatus = ExtAudioFileWrite(file, outputFrameCount, &outputBufferList)
         if writeStatus != noErr {
             logger.error("🎙️ ExtAudioFileWrite failed with status: \(writeStatus)")
+        }
+
+        // Send the same PCM data to the streaming callback if set
+        if let onAudioChunk = onAudioChunk {
+            let byteCount = Int(outputFrameCount) * MemoryLayout<Int16>.size
+            let data = Data(bytes: outputBuffer, count: byteCount)
+            onAudioChunk(data)
         }
     }
 

@@ -10,6 +10,20 @@ import Foundation
                 let appleSupportedCodes = ["ar", "de", "en", "es", "fr", "it", "ja", "ko", "pt", "yue", "zh"]
                 return allLanguages.filter { appleSupportedCodes.contains($0.key) }
             }
+            // For Soniox, return only the 60 languages supported by stt-async-v4
+            if provider == .soniox {
+                let sonioxSupportedCodes = [
+                    "af", "sq", "ar", "az", "eu", "be", "bn", "bs", "bg", "ca",
+                    "zh", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "gl",
+                    "de", "el", "gu", "he", "hi", "hu", "id", "it", "ja", "kn",
+                    "kk", "ko", "lv", "lt", "mk", "ms", "ml", "mr", "no", "fa",
+                    "pl", "pt", "pa", "ro", "ru", "sr", "sk", "sl", "es", "sw",
+                    "sv", "tl", "ta", "te", "th", "tr", "uk", "ur", "vi", "cy"
+                ]
+                var filtered = allLanguages.filter { sonioxSupportedCodes.contains($0.key) }
+                filtered["auto"] = "Auto-detect"
+                return filtered
+            }
             return allLanguages
         }
     }
@@ -82,7 +96,7 @@ import Foundation
         NativeAppleModel(
             name: "apple-speech",
             displayName: "Apple Speech",
-            description: "Uses the native Apple Speech framework for transcription. Requires macOS 26.",
+            description: "Uses the native Apple Speech framework for transcription. Requires macOS 26",
             isMultilingualModel: true,
             supportedLanguages: getLanguageDictionary(isMultilingual: true, provider: .nativeApple)
         ),
@@ -91,7 +105,7 @@ import Foundation
         ParakeetModel(
             name: "parakeet-tdt-0.6b-v2",
             displayName: "Parakeet V2",
-            description: "NVIDIA's Parakeet V2 model optimized for lightning-fast English-only transcription.",
+            description: "NVIDIA's Parakeet V2 model optimized for lightning-fast English-only transcription",
             size: "474 MB",
             speed: 0.99,
             accuracy: 0.94,
@@ -101,7 +115,7 @@ import Foundation
         ParakeetModel(
             name: "parakeet-tdt-0.6b-v3",
             displayName: "Parakeet V3",
-            description: "NVIDIA's Parakeet V3 model with multilingual support across English and 25 European languages.",
+            description: "NVIDIA's Parakeet V3 model with multilingual support across English and 25 European languages",
             size: "494 MB",
             speed: 0.99,
             accuracy: 0.94,
@@ -199,14 +213,14 @@ import Foundation
             description: "Whisper Large v3 Turbo model with Groq's lightning-speed inference",
             provider: .groq,
             speed: 0.65,
-            accuracy: 0.96,
+            accuracy: 0.95,
             isMultilingual: true,
             supportedLanguages: getLanguageDictionary(isMultilingual: true, provider: .groq)
         ),
         CloudModel(
            name: "scribe_v1",
            displayName: "Scribe v1 (ElevenLabs)",
-           description: "ElevenLabs' Scribe model for fast & accurate transcription.",
+           description: "ElevenLabs' Scribe model for fast & accurate transcription",
            provider: .elevenLabs,
            speed: 0.7,
            accuracy: 0.98,
@@ -215,40 +229,50 @@ import Foundation
        ),
        CloudModel(
            name: "scribe_v2",
-           displayName: "Scribe v2 (ElevenLabs)",
-           description: "ElevenLabs' Scribe v2 model for the most accurate transcription.",
+           displayName: "Scribe V2 Realtime (ElevenLabs)",
+           description: "ElevenLabs' Scribe V2 Realtime model for the most accurate transcription",
            provider: .elevenLabs,
-           speed: 0.75,
-           accuracy: 0.99,
+           speed: 0.99,
+           accuracy: 0.98,
            isMultilingual: true,
            supportedLanguages: getLanguageDictionary(isMultilingual: true, provider: .elevenLabs)
        ),
        CloudModel(
-           name: "nova-2",
-           displayName: "Nova (Deepgram)",
-           description: "Deepgram's Nova model for fast, accurate, and cost-effective transcription.",
+           name: "nova-3",
+           displayName: "Nova 3 Realtime (Deepgram)",
+           description: "Deepgram's latest Nova 3 model for realtime transcription",
            provider: .deepgram,
-           speed: 0.9,
-           accuracy: 0.95,
+           speed: 0.99,
+           accuracy: 0.96,
            isMultilingual: true,
            supportedLanguages: getLanguageDictionary(isMultilingual: true, provider: .deepgram)
        ),
        CloudModel(
            name: "nova-3-medical",
-           displayName: "Nova-3 Medical (Deepgram)",
-           description: "Specialized medical transcription model optimized for clinical environments.",
+           displayName: "Nova 3 Medical Realtime (Deepgram)",
+           description: "Specialized medical transcription model optimized for clinical environments",
            provider: .deepgram,
-           speed: 0.9,
+           speed: 0.99,
            accuracy: 0.96,
            isMultilingual: false,
            supportedLanguages: getLanguageDictionary(isMultilingual: false, provider: .deepgram)
        ),
         CloudModel(
             name: "voxtral-mini-latest",
-            displayName: "Voxtral Mini (Mistral)",
-            description: "Mistral's latest SOTA transcription model.",
+            displayName: "Voxtral Transcribe 2 (Mistral)",
+            description: "Mistral's latest transcription model for fast and accurate transcription",
             provider: .mistral,
             speed: 0.8,
+            accuracy: 0.98,
+            isMultilingual: true,
+            supportedLanguages: getLanguageDictionary(isMultilingual: true, provider: .mistral)
+        ),
+        CloudModel(
+            name: "voxtral-mini-transcribe-realtime-2602",
+            displayName: "Voxtral Realtime (Mistral)",
+            description: "Mistral's Voxtral Realtime model for streaming transcription",
+            provider: .mistral,
+            speed: 0.99,
             accuracy: 0.97,
             isMultilingual: true,
             supportedLanguages: getLanguageDictionary(isMultilingual: true, provider: .mistral)
@@ -258,27 +282,27 @@ import Foundation
         CloudModel(
             name: "gemini-2.5-pro",
             displayName: "Gemini 2.5 Pro",
-            description: "Google's advanced multimodal model with high-quality transcription capabilities.",
+            description: "Google's advanced model with high-quality transcription capabilities",
             provider: .gemini,
             speed: 0.7,
-            accuracy: 0.96,
+            accuracy: 0.97,
             isMultilingual: true,
             supportedLanguages: getLanguageDictionary(isMultilingual: true, provider: .gemini)
         ),
         CloudModel(
             name: "gemini-2.5-flash",
             displayName: "Gemini 2.5 Flash",
-            description: "Google's optimized model for low-latency transcription with multimodal support.",
+            description: "Google's optimized model for low-latency transcription",
             provider: .gemini,
             speed: 0.9,
-            accuracy: 0.94,
+            accuracy: 0.95,
             isMultilingual: true,
             supportedLanguages: getLanguageDictionary(isMultilingual: true, provider: .gemini)
         ),
         CloudModel(
             name: "gemini-3-pro-preview",
             displayName: "Gemini 3 Pro",
-            description: "Google's latest multimodal model with enhanced transcription capabilities.",
+            description: "Google's latest model with enhanced transcription capabilities",
             provider: .gemini,
             speed: 0.75,
             accuracy: 0.97,
@@ -288,7 +312,7 @@ import Foundation
         CloudModel(
             name: "gemini-3-flash-preview",
             displayName: "Gemini 3 Flash",
-            description: "Google's newest fast model combining intelligence with superior speed.",
+            description: "Google's newest fast model combining intelligence with superior speed",
             provider: .gemini,
             speed: 0.92,
             accuracy: 0.95,
@@ -297,12 +321,22 @@ import Foundation
         )
         ,
         CloudModel(
-            name: "stt-async-v3",
-            displayName: "Soniox (stt-async-v3)",
-            description: "Soniox asynchronous transcription model v3.",
+            name: "stt-async-v4",
+            displayName: "Soniox V4",
+            description: "Soniox asynchronous transcription model v4 with human-parity accuracy",
             provider: .soniox,
             speed: 0.8,
-            accuracy: 0.96,
+            accuracy: 0.98,
+            isMultilingual: true,
+            supportedLanguages: getLanguageDictionary(isMultilingual: true, provider: .soniox)
+        ),
+        CloudModel(
+            name: "stt-rt-v4",
+            displayName: "Soniox Realtime V4",
+            description: "Soniox real-time streaming model v4 for low-latency transcription",
+            provider: .soniox,
+            speed: 0.99,
+            accuracy: 0.97,
             isMultilingual: true,
             supportedLanguages: getLanguageDictionary(isMultilingual: true, provider: .soniox)
         )

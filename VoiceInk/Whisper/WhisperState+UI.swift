@@ -33,10 +33,13 @@ extension WhisperState {
     // MARK: - Mini Recorder Management
     
     func toggleMiniRecorder(powerModeId: UUID? = nil) async {
+        logger.notice("toggleMiniRecorder called – visible=\(self.isMiniRecorderVisible), state=\(String(describing: self.recordingState))")
         if isMiniRecorderVisible {
             if recordingState == .recording {
+                logger.notice("toggleMiniRecorder: stopping recording (was recording)")
                 await toggleRecord(powerModeId: powerModeId)
             } else {
+                logger.notice("toggleMiniRecorder: cancelling (was not recording)")
                 await cancelRecording()
             }
         } else {
@@ -51,14 +54,22 @@ extension WhisperState {
     }
     
     func dismissMiniRecorder() async {
-        if recordingState == .busy { return }
+        logger.notice("dismissMiniRecorder called – state=\(String(describing: self.recordingState))")
+        if recordingState == .busy {
+            logger.notice("dismissMiniRecorder: early return, state is busy")
+            return
+        }
 
         let wasRecording = recordingState == .recording
- 
+
         await MainActor.run {
             self.recordingState = .busy
         }
-        
+
+        // Cancel and release any active streaming session to prevent resource leaks.
+        currentSession?.cancel()
+        currentSession = nil
+
         if wasRecording {
             await recorder.stopRecording()
         }
@@ -88,8 +99,9 @@ extension WhisperState {
         await MainActor.run {
             recordingState = .idle
         }
+        logger.notice("dismissMiniRecorder completed")
     }
-    
+
     func resetOnLaunch() async {
         logger.notice("🔄 Resetting recording state on launch")
         await recorder.stopRecording()
@@ -104,6 +116,7 @@ extension WhisperState {
     }
     
     func cancelRecording() async {
+        logger.notice("cancelRecording called")
         SoundManager.shared.playEscSound()
         shouldCancelRecording = true
         await dismissMiniRecorder()
@@ -119,12 +132,14 @@ extension WhisperState {
     }
     
     @objc public func handleToggleMiniRecorder() {
+        logger.notice("handleToggleMiniRecorder: .toggleMiniRecorder notification received")
         Task {
             await toggleMiniRecorder()
         }
     }
-    
+
     @objc public func handleDismissMiniRecorder() {
+        logger.notice("handleDismissMiniRecorder: .dismissMiniRecorder notification received")
         Task {
             await dismissMiniRecorder()
         }

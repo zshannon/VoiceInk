@@ -1,14 +1,25 @@
 import SwiftUI
+import SwiftData
+import os
 
 struct MetricsContent: View {
-    let transcriptions: [Transcription]
+    private let logger = Logger(subsystem: "com.prakashjoshipax.VoiceInk", category: "MetricsContent")
+    let modelContext: ModelContext
     let licenseState: LicenseViewModel.LicenseState
-    @State private var showKeyboardShortcuts = false
+
+    @State private var totalCount: Int = 0
+    @State private var totalWords: Int = 0
+    @State private var totalDuration: TimeInterval = 0
+    @State private var isLoadingMetrics: Bool = true
+    @State private var metricsTask: Task<Void, Never>?
 
     var body: some View {
         Group {
-            if transcriptions.isEmpty {
+            if totalCount == 0 && !isLoadingMetrics {
                 emptyStateView
+            } else if isLoadingMetrics {
+                ProgressView("Loading metrics...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 GeometryReader { geometry in
                     ScrollView {
@@ -35,8 +46,90 @@ struct MetricsContent: View {
                 }
             }
         }
+        .task {
+            await loadMetricsEfficiently()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .transcriptionCreated)) { _ in
+            metricsTask?.cancel()
+            metricsTask = Task {
+                await loadMetricsEfficiently()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .transcriptionCompleted)) { _ in
+            metricsTask?.cancel()
+            metricsTask = Task {
+                await loadMetricsEfficiently()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .transcriptionDeleted)) { _ in
+            metricsTask?.cancel()
+            metricsTask = Task {
+                await loadMetricsEfficiently()
+            }
+        }
+        .onDisappear {
+            metricsTask?.cancel()
+        }
     }
     
+    private func loadMetricsEfficiently() async {
+        await MainActor.run {
+            self.isLoadingMetrics = true
+        }
+
+        let modelContainer = modelContext.container
+
+        let backgroundContext = ModelContext(modelContainer)
+
+        do {
+            guard !Task.isCancelled else {
+                await MainActor.run {
+                    self.isLoadingMetrics = false
+                }
+                return
+            }
+
+            let count = try backgroundContext.fetchCount(FetchDescriptor<Transcription>())
+
+            guard !Task.isCancelled else {
+                await MainActor.run {
+                    self.isLoadingMetrics = false
+                }
+                return
+            }
+
+            var descriptor = FetchDescriptor<Transcription>()
+            descriptor.propertiesToFetch = [\.text, \.duration]
+
+            var words = 0
+            var duration: TimeInterval = 0
+
+            try backgroundContext.enumerate(descriptor) { transcription in
+                words += transcription.text.split(whereSeparator: \.isWhitespace).count
+                duration += transcription.duration
+            }
+
+            guard !Task.isCancelled else {
+                await MainActor.run {
+                    self.isLoadingMetrics = false
+                }
+                return
+            }
+
+            await MainActor.run {
+                self.totalCount = count
+                self.totalWords = words
+                self.totalDuration = duration
+                self.isLoadingMetrics = false
+            }
+        } catch {
+            logger.error("Error loading metrics: \(error.localizedDescription)")
+            await MainActor.run {
+                self.isLoadingMetrics = false
+            }
+        }
+    }
+
     private var emptyStateView: some View {
         VStack(spacing: 20) {
             Image(systemName: "waveform")
@@ -104,15 +197,15 @@ struct MetricsContent: View {
             MetricCard(
                 icon: "mic.fill",
                 title: "Sessions Recorded",
-                value: "\(transcriptions.count)",
+                value: "\(totalCount)",
                 detail: "VoiceInk sessions completed",
                 color: .purple
             )
-            
+
             MetricCard(
                 icon: "text.alignleft",
                 title: "Words Dictated",
-                value: Formatters.formattedNumber(totalWordsTranscribed),
+                value: Formatters.formattedNumber(totalWords),
                 detail: "words generated",
                 color: Color(nsColor: .controlAccentColor)
             )
@@ -138,10 +231,7 @@ struct MetricsContent: View {
     }
     
     private var footerActionsView: some View {
-        HStack(spacing: 12) {
-            KeyboardShortcutsButton(showKeyboardShortcuts: $showKeyboardShortcuts)
-            CopySystemInfoButton()
-        }
+        CopySystemInfoButton()
     }
     
     private var formattedTimeSaved: String {
@@ -150,15 +240,14 @@ struct MetricsContent: View {
     }
     
     private var heroSubtitle: String {
-        guard !transcriptions.isEmpty else {
+        guard totalCount > 0 else {
             return "Your VoiceInk journey starts with your first recording."
         }
-        
-        let wordsText = Formatters.formattedNumber(totalWordsTranscribed)
-        let sessionCount = transcriptions.count
-        let sessionText = sessionCount == 1 ? "session" : "sessions"
-        
-        return "Dictated \(wordsText) words across \(sessionCount) \(sessionText)."
+
+        let wordsText = Formatters.formattedNumber(totalWords)
+        let sessionText = totalCount == 1 ? "session" : "sessions"
+
+        return "Dictated \(wordsText) words across \(totalCount) \(sessionText)."
     }
     
     private var heroGradient: LinearGradient {
@@ -174,38 +263,24 @@ struct MetricsContent: View {
     }
     
     // MARK: - Computed Metrics
-    
-    private var totalWordsTranscribed: Int {
-        transcriptions.reduce(0) { $0 + $1.text.split(separator: " ").count }
-    }
-    
-    private var totalRecordedTime: TimeInterval {
-        transcriptions.reduce(0) { $0 + $1.duration }
-    }
-    
+
     private var estimatedTypingTime: TimeInterval {
         let averageTypingSpeed: Double = 35 // words per minute
-        let totalWords = Double(totalWordsTranscribed)
-        let estimatedTypingTimeInMinutes = totalWords / averageTypingSpeed
+        let estimatedTypingTimeInMinutes = Double(totalWords) / averageTypingSpeed
         return estimatedTypingTimeInMinutes * 60
     }
-    
+
     private var timeSaved: TimeInterval {
-        max(estimatedTypingTime - totalRecordedTime, 0)
+        max(estimatedTypingTime - totalDuration, 0)
     }
-    
+
     private var averageWordsPerMinute: Double {
-        guard totalRecordedTime > 0 else { return 0 }
-        return Double(totalWordsTranscribed) / (totalRecordedTime / 60.0)
+        guard totalDuration > 0 else { return 0 }
+        return Double(totalWords) / (totalDuration / 60.0)
     }
-    
+
     private var totalKeystrokesSaved: Int {
-        Int(Double(totalWordsTranscribed) * 5.0)
-    }
-    
-    private var firstTranscriptionDateText: String? {
-        guard let firstDate = transcriptions.map(\.timestamp).min() else { return nil }
-        return dateFormatter.string(from: firstDate)
+        Int(Double(totalWords) * 5.0)
     }
     
     private var dateFormatter: DateFormatter {
@@ -238,31 +313,6 @@ private enum Formatters {
         durationFormatter.unitsStyle = style
         durationFormatter.allowedUnits = interval >= 3600 ? [.hour, .minute] : [.minute, .second]
         return durationFormatter.string(from: interval) ?? fallback
-    }
-}
-
-private struct KeyboardShortcutsButton: View {
-    @Binding var showKeyboardShortcuts: Bool
-
-    var body: some View {
-        Button(action: {
-            showKeyboardShortcuts = true
-        }) {
-            HStack(spacing: 8) {
-                Image(systemName: "command")
-                    .font(.system(size: 13, weight: .medium))
-
-                Text("Keyboard Shortcuts")
-            }
-            .font(.system(size: 13, weight: .medium))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Capsule().fill(.thinMaterial))
-        }
-        .buttonStyle(.plain)
-        .popover(isPresented: $showKeyboardShortcuts, arrowEdge: .bottom) {
-            KeyboardShortcutsListView()
-        }
     }
 }
 
