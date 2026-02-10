@@ -2,6 +2,7 @@ import Foundation
 import KeyboardShortcuts
 import Carbon
 import AppKit
+import CoreGraphics
 
 extension KeyboardShortcuts.Name {
     static let toggleMiniRecorder = Self("toggleMiniRecorder")
@@ -58,12 +59,17 @@ class HotkeyManager: ObservableObject {
     private var middleClickMonitors: [Any?] = []
     private var middleClickTask: Task<Void, Never>?
 
+    // Cancel-on-any-key monitoring via CGEventTap
+    private var cancelKeyEventTap: CFMachPort?
+    private var cancelKeyRunLoopSource: CFRunLoopSource?
+
     // Combination key state tracking
     private var heldModifierKeys: Set<HotkeyOption> = []
     private var combinationActive = false
     private var keyPressEventTime: TimeInterval?
     private let briefPressThreshold = 0.5
     private var isHandsFreeMode = false
+    private var wasCancelledByKey = false
 
     // Debounce for Fn key
     private var fnDebounceTask: Task<Void, Never>?
@@ -285,10 +291,91 @@ class HotkeyManager: ObservableObject {
     
     private func setupHotkeyMonitoring() {
         removeAllMonitoring()
-        
+
         setupModifierKeyMonitoring()
         setupCustomShortcutMonitoring()
         setupMiddleClickMonitoring()
+        setupCancelOnKeyMonitoring()
+    }
+
+    private func setupCancelOnKeyMonitoring() {
+        removeCancelKeyTap()
+
+        // Check/request Accessibility permission with prompt
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        let trusted = AXIsProcessTrustedWithOptions(options)
+        guard trusted else { return }
+
+        // Create event tap for keyDown events
+        // Using .cghidEventTap for lower-level access
+        // Using .listenOnly to just observe without modifying events
+        let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
+
+        // We need to use a static callback because CGEventTap doesn't support closures directly
+        // Store self reference in a global for the callback
+        HotkeyManager.sharedForCancelKey = self
+
+        guard let eventTap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: eventMask,
+            callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
+                // Handle tap disabled event (system can disable taps)
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let refcon = refcon {
+                        let tap = Unmanaged<CFMachPort>.fromOpaque(refcon).takeUnretainedValue()
+                        CGEvent.tapEnable(tap: tap, enable: true)
+                    }
+                    return Unmanaged.passRetained(event)
+                }
+
+                guard type == .keyDown else {
+                    return Unmanaged.passRetained(event)
+                }
+
+                if let manager = HotkeyManager.sharedForCancelKey {
+                    Task { @MainActor in
+                        manager.checkAndCancelRecording()
+                    }
+                }
+
+                return Unmanaged.passRetained(event)
+            },
+            userInfo: nil
+        ) else {
+            return
+        }
+
+        cancelKeyEventTap = eventTap
+
+        let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
+        cancelKeyRunLoopSource = runLoopSource
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        CGEvent.tapEnable(tap: eventTap, enable: true)
+    }
+
+    private func removeCancelKeyTap() {
+        if let runLoopSource = cancelKeyRunLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+            cancelKeyRunLoopSource = nil
+        }
+        if let eventTap = cancelKeyEventTap {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            cancelKeyEventTap = nil
+        }
+        HotkeyManager.sharedForCancelKey = nil
+    }
+
+    // Static reference for CGEventTap callback (callbacks can't capture self)
+    private static weak var sharedForCancelKey: HotkeyManager?
+
+    private func checkAndCancelRecording() {
+        Task { @MainActor in
+            guard self.whisperState.isMiniRecorderVisible, self.whisperState.recordingState == .recording else { return }
+            self.wasCancelledByKey = true
+            NotificationCenter.default.post(name: .dismissMiniRecorder, object: nil)
+        }
     }
     
     private func setupModifierKeyMonitoring() {
@@ -386,7 +473,9 @@ class HotkeyManager: ObservableObject {
         }
         middleClickMonitors = []
         middleClickTask?.cancel()
-        
+
+        removeCancelKeyTap()
+
         resetKeyStates()
     }
     
@@ -395,6 +484,7 @@ class HotkeyManager: ObservableObject {
         combinationActive = false
         keyPressEventTime = nil
         isHandsFreeMode = false
+        wasCancelledByKey = false
         shortcutCurrentKeyState = false
         shortcutKeyPressEventTime = nil
         isShortcutHandsFreeMode = false
@@ -476,6 +566,15 @@ class HotkeyManager: ObservableObject {
     private func processCombinationUp(eventTime: TimeInterval) {
         guard let startTime = keyPressEventTime else { return }
         let pressDuration = eventTime - startTime
+
+        // If recording was cancelled by pressing another key, reset all state and don't restart
+        if wasCancelledByKey {
+            wasCancelledByKey = false
+            isHandsFreeMode = false
+            keyPressEventTime = nil
+            combinationActive = false
+            return
+        }
 
         if pressDuration < briefPressThreshold {
             // Brief press - enter hands-free mode
