@@ -430,6 +430,23 @@ class AIEnhancementService: ObservableObject {
         screenCaptureService.lastCapturedText = nil
     }
 
+    /// Pre-warms the connection to the AI provider by making a lightweight request.
+    /// Call this when recording starts so the connection is ready when enhancement is needed.
+    func warmConnection() async {
+        guard isEnhancementEnabled, isConfigured else { return }
+
+        // Skip for Ollama (local)
+        guard aiService.selectedProvider != .ollama else { return }
+
+        let url = URL(string: aiService.selectedProvider.baseURL)!
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 5
+
+        // Just fire and forget - we only care about establishing the connection
+        _ = try? await URLSession.shared.data(for: request)
+    }
+
     func addPrompt(title: String, promptText: String, icon: PromptIcon = "doc.text.fill", description: String? = nil, triggerWords: [String] = [], useSystemInstructions: Bool = true) {
         let newPrompt = CustomPrompt(title: title, promptText: promptText, icon: icon, description: description, isPredefined: false, triggerWords: triggerWords, useSystemInstructions: useSystemInstructions)
         customPrompts.append(newPrompt)

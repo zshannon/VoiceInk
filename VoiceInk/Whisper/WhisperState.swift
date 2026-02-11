@@ -278,7 +278,9 @@ class WhisperState: NSObject, ObservableObject {
                                     await MainActor.run {
                                         enhancementService.captureClipboardContext()
                                     }
-                                    await enhancementService.captureScreenContext()
+                                    async let warmup: () = enhancementService.warmConnection()
+                                    async let capture: () = enhancementService.captureScreenContext()
+                                    _ = await (warmup, capture)
                                 }
                             }
 
