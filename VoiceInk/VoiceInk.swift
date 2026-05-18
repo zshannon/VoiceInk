@@ -18,7 +18,6 @@ struct VoiceInkApp: App {
     @StateObject private var transcriptionModelManager: TranscriptionModelManager
     @StateObject private var recorderUIManager: RecorderUIManager
     @StateObject private var recordingShortcutManager: RecordingShortcutManager
-    @StateObject private var hotkeyManager: HotkeyManager
     @StateObject private var updaterViewModel: UpdaterViewModel
     @StateObject private var menuBarManager: MenuBarManager
     @StateObject private var aiService = AIService()
@@ -150,8 +149,6 @@ struct VoiceInkApp: App {
         let recordingShortcutManager = RecordingShortcutManager(engine: engine, recorderUIManager: recorderUIManager)
         _recordingShortcutManager = StateObject(wrappedValue: recordingShortcutManager)
 
-        let hotkeyManager = HotkeyManager(engine: engine, recorderUIManager: recorderUIManager)
-        _hotkeyManager = StateObject(wrappedValue: hotkeyManager)
 
         let menuBarManager = MenuBarManager()
         _menuBarManager = StateObject(wrappedValue: menuBarManager)
@@ -294,7 +291,6 @@ struct VoiceInkApp: App {
                     .environmentObject(transcriptionModelManager)
                     .environmentObject(recorderUIManager)
                     .environmentObject(recordingShortcutManager)
-                    .environmentObject(hotkeyManager)
                     .environmentObject(updaterViewModel)
                     .environmentObject(menuBarManager)
                     .environmentObject(aiService)

@@ -60,8 +60,8 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     private var pillWidth: CGFloat {
         switch displayState {
         case .collapsed: return notchWidth
-        case .active:    return notchWidth + recordingSideExpansion * 2
-        case .liveText:  return notchWidth + transcriptSideExpansion * 2
+        case .active:    return notchWidth + recordingSideExpansion
+        case .liveText:  return notchWidth + transcriptSideExpansion
         }
     }
 
@@ -91,7 +91,8 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     var body: some View {
         if windowManager.isVisible {
             GeometryReader { geo in
-                pill.position(x: geo.size.width / 2, y: pillHeight / 2)
+                let expansion = displayState == .collapsed ? 0 : sideExpansion
+                pill.position(x: geo.size.width / 2 + expansion / 2, y: pillHeight / 2)
             }
             .animation(pillAnimation, value: displayState)
         }
@@ -119,20 +120,6 @@ struct NotchRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     private var mainRow: some View {
         ZStack {
             Color.clear
-
-            HStack(spacing: 10) {
-                RecorderPromptButton(activePopover: $activePopover, buttonSize: 20, padding: EdgeInsets())
-                RecorderPowerModeButton(activePopover: $activePopover, buttonSize: 20, padding: EdgeInsets())
-                Spacer(minLength: 0)
-            }
-            .padding(.leading, displayState == .liveText ? 18 : 14)
-            .frame(width: sideExpansion)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .opacity(displayState != .collapsed ? 1 : 0)
-            .animation(
-                displayState != .collapsed ? expandAnimation.delay(0.09) : collapseAnimation,
-                value: displayState
-            )
 
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
