@@ -4,8 +4,8 @@ import KeyboardShortcuts
 
 struct KeyboardShortcutsListView: View {
     @EnvironmentObject private var hotkeyManager: HotkeyManager
-    @ObservedObject private var shortcutSettings = EnhancementShortcutSettings.shared
-    @State private var customCancelShortcut: KeyboardShortcuts.Shortcut?
+    @State private var isToggleEnhancementShortcutEnabled: Bool = ShortcutStore.shortcut(for: .toggleEnhancement) != nil
+    @State private var customCancelShortcut: Shortcut?
     @State private var pasteOriginalShortcut: KeyboardShortcuts.Shortcut?
     @State private var pasteEnhancedShortcut: KeyboardShortcuts.Shortcut?
     @State private var retryShortcut: KeyboardShortcuts.Shortcut?
@@ -130,7 +130,7 @@ struct KeyboardShortcutsListView: View {
                         subtitle: customCancelShortcut != nil ? "Custom shortcut or default: Double ESC" : "Default: Double ESC"
                     ) {
                         if let cancelShortcut = customCancelShortcut {
-                            KeyboardShortcutBadge(shortcut: cancelShortcut)
+                            StaticKeysBadge(keys: cancelShortcut.displayTokens)
                         } else {
                             StaticKeysBadge(keys: ["⎋", "⎋"])
                         }
@@ -140,9 +140,9 @@ struct KeyboardShortcutsListView: View {
                         icon: "wand.and.stars",
                         iconColor: .purple,
                         title: "Toggle Enhancement",
-                        subtitle: shortcutSettings.isToggleEnhancementShortcutEnabled ? "Enable/disable AI enhancement" : "Disabled in settings"
+                        subtitle: isToggleEnhancementShortcutEnabled ? "Enable/disable AI enhancement" : "Disabled in settings"
                     ) {
-                        StaticKeysBadge(keys: ["⌘", "E"], isEnabled: shortcutSettings.isToggleEnhancementShortcutEnabled)
+                        StaticKeysBadge(keys: ["⌘", "E"], isEnabled: isToggleEnhancementShortcutEnabled)
                     }
 
                     ShortcutCard(
@@ -189,12 +189,13 @@ struct KeyboardShortcutsListView: View {
     }
 
     private func loadShortcuts() {
-        customCancelShortcut = KeyboardShortcuts.getShortcut(for: .cancelRecorder)
+        customCancelShortcut = ShortcutStore.shortcut(for: .cancelRecorder)
         pasteOriginalShortcut = KeyboardShortcuts.getShortcut(for: .pasteLastTranscription)
         pasteEnhancedShortcut = KeyboardShortcuts.getShortcut(for: .pasteLastEnhancement)
         retryShortcut = KeyboardShortcuts.getShortcut(for: .retryLastTranscription)
         toggleHotkey1 = KeyboardShortcuts.getShortcut(for: .toggleMiniRecorder)
         toggleHotkey2 = KeyboardShortcuts.getShortcut(for: .toggleMiniRecorder2)
+        isToggleEnhancementShortcutEnabled = ShortcutStore.shortcut(for: .toggleEnhancement) != nil
     }
 }
 
@@ -462,6 +463,22 @@ private struct NotSetBadge: View {
 }
 
 #Preview {
-    KeyboardShortcutsListView()
-        .environmentObject(HotkeyManager(whisperState: WhisperState(modelContext: try! ModelContext(ModelContainer(for: Transcription.self)))))
+    let container = try! ModelContainer(for: Transcription.self)
+    let modelContext = container.mainContext
+    let whisperModelManager = WhisperModelManager(modelsDirectory: FileManager.default.temporaryDirectory)
+    let fluidAudioModelManager = FluidAudioModelManager()
+    let transcriptionModelManager = TranscriptionModelManager(
+        whisperModelManager: whisperModelManager,
+        fluidAudioModelManager: fluidAudioModelManager
+    )
+    let recorderUIManager = RecorderUIManager()
+    let engine = VoiceInkEngine(
+        modelContext: modelContext,
+        whisperModelManager: whisperModelManager,
+        transcriptionModelManager: transcriptionModelManager
+    )
+    recorderUIManager.configure(engine: engine, recorder: engine.recorder)
+    engine.recorderUIManager = recorderUIManager
+    return KeyboardShortcutsListView()
+        .environmentObject(HotkeyManager(engine: engine, recorderUIManager: recorderUIManager))
 }

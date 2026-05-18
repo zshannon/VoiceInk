@@ -18,6 +18,7 @@ struct VoiceInkApp: App {
     @StateObject private var transcriptionModelManager: TranscriptionModelManager
     @StateObject private var recorderUIManager: RecorderUIManager
     @StateObject private var recordingShortcutManager: RecordingShortcutManager
+    @StateObject private var hotkeyManager: HotkeyManager
     @StateObject private var updaterViewModel: UpdaterViewModel
     @StateObject private var menuBarManager: MenuBarManager
     @StateObject private var aiService = AIService()
@@ -149,6 +150,9 @@ struct VoiceInkApp: App {
         let recordingShortcutManager = RecordingShortcutManager(engine: engine, recorderUIManager: recorderUIManager)
         _recordingShortcutManager = StateObject(wrappedValue: recordingShortcutManager)
 
+        let hotkeyManager = HotkeyManager(engine: engine, recorderUIManager: recorderUIManager)
+        _hotkeyManager = StateObject(wrappedValue: hotkeyManager)
+
         let menuBarManager = MenuBarManager()
         _menuBarManager = StateObject(wrappedValue: menuBarManager)
         menuBarManager.configure(modelContainer: resolvedContainer, engine: engine)
@@ -178,6 +182,14 @@ struct VoiceInkApp: App {
         Task {
             await migrationTask?.value
             TranscriptionAutoCleanupService.shared.startMonitoring(modelContext: mainContext)
+        }
+
+        // Pre-warm the AudioUnit for faster recording startup
+        let warmDeviceID = AudioDeviceManager.shared.getCurrentDevice()
+        if warmDeviceID != 0 {
+            DispatchQueue.global(qos: .userInitiated).async {
+                AudioUnitPool.shared.warmUp(forDevice: warmDeviceID)
+            }
         }
     }
 
@@ -282,6 +294,7 @@ struct VoiceInkApp: App {
                     .environmentObject(transcriptionModelManager)
                     .environmentObject(recorderUIManager)
                     .environmentObject(recordingShortcutManager)
+                    .environmentObject(hotkeyManager)
                     .environmentObject(updaterViewModel)
                     .environmentObject(menuBarManager)
                     .environmentObject(aiService)
@@ -399,10 +412,11 @@ class UpdaterViewModel: ObservableObject {
     @Published var automaticallyChecksForUpdates = false
 
     init() {
-        updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        // Disabled for local development - set startingUpdater to true to re-enable
+        updaterController = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil)
 
-        // Enable automatic update checking
-        updaterController.updater.automaticallyChecksForUpdates = autoUpdateCheck
+        // Disable automatic update checking for local development
+        updaterController.updater.automaticallyChecksForUpdates = false
         updaterController.updater.updateCheckInterval = 24 * 60 * 60
 
 
