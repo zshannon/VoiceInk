@@ -17,6 +17,7 @@ final class ShortcutMonitor {
     private var shortcuts: [ShortcutAction: ShortcutState] = [:]
     private var onKeyDown: ((ShortcutAction, TimeInterval) -> Void)?
     private var onKeyUp: ((ShortcutAction, TimeInterval) -> Void)?
+    private var onOtherKeyDownWhileShortcutHeld: ((TimeInterval) -> Void)?
     private var eventTap: CFMachPort?
     private var eventTapRunLoopSource: CFRunLoopSource?
 
@@ -30,7 +31,8 @@ final class ShortcutMonitor {
     func start(
         shortcuts: [ShortcutAction: Shortcut],
         onKeyDown: @escaping (ShortcutAction, TimeInterval) -> Void,
-        onKeyUp: @escaping (ShortcutAction, TimeInterval) -> Void
+        onKeyUp: @escaping (ShortcutAction, TimeInterval) -> Void,
+        onOtherKeyDownWhileShortcutHeld: ((TimeInterval) -> Void)? = nil
     ) -> Bool {
         stop()
 
@@ -44,6 +46,7 @@ final class ShortcutMonitor {
 
         self.onKeyDown = onKeyDown
         self.onKeyUp = onKeyUp
+        self.onOtherKeyDownWhileShortcutHeld = onOtherKeyDownWhileShortcutHeld
 
         return installEventTap()
     }
@@ -62,6 +65,7 @@ final class ShortcutMonitor {
         shortcuts = [:]
         onKeyDown = nil
         onKeyUp = nil
+        onOtherKeyDownWhileShortcutHeld = nil
     }
 
     private func installEventTap() -> Bool {
@@ -165,6 +169,8 @@ final class ShortcutMonitor {
         eventTime: TimeInterval
     ) -> Bool {
         var shouldSuppress = false
+        let anyShortcutHeldBefore = shortcuts.values.contains { $0.isDown }
+        var matchedAnyShortcut = false
 
         for action in Array(shortcuts.keys) {
             guard var state = shortcuts[action] else {
@@ -196,17 +202,26 @@ final class ShortcutMonitor {
                 break
             case .suppress:
                 shouldSuppress = true
+                matchedAnyShortcut = true
             case .keyDown:
                 state.isDown = true
                 shortcuts[action] = state
                 shouldSuppress = true
+                matchedAnyShortcut = true
                 dispatchKeyDown(for: action, eventTime: eventTime)
             case .keyUp:
                 state.isDown = false
                 shortcuts[action] = state
                 shouldSuppress = true
+                matchedAnyShortcut = true
                 dispatchKeyUp(for: action, eventTime: eventTime)
             }
+        }
+
+        if kind == .keyDown,
+           anyShortcutHeldBefore,
+           !matchedAnyShortcut {
+            dispatchOtherKeyDownWhileShortcutHeld(eventTime: eventTime)
         }
 
         return shouldSuppress
@@ -288,6 +303,12 @@ final class ShortcutMonitor {
     private func dispatchKeyUp(for action: ShortcutAction, eventTime: TimeInterval) {
         DispatchQueue.main.async { [onKeyUp] in
             onKeyUp?(action, eventTime)
+        }
+    }
+
+    private func dispatchOtherKeyDownWhileShortcutHeld(eventTime: TimeInterval) {
+        DispatchQueue.main.async { [onOtherKeyDownWhileShortcutHeld] in
+            onOtherKeyDownWhileShortcutHeld?(eventTime)
         }
     }
 

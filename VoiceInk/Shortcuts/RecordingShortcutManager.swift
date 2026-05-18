@@ -64,6 +64,7 @@ class RecordingShortcutManager: ObservableObject {
     private var isShortcutPressed = false
     private var lastShortcutPressTime: Date?
     private let shortcutPressCooldown: TimeInterval = 0.5
+    private var wasCancelledByOtherKey = false
 
     private static let hybridPressThreshold: TimeInterval = 0.5
 
@@ -208,8 +209,21 @@ class RecordingShortcutManager: ObservableObject {
                         await self.handleGlobalShortcut(action)
                     }
                 }
+            },
+            onOtherKeyDownWhileShortcutHeld: { [weak self] _ in
+                Task { @MainActor in
+                    await self?.handleOtherKeyDownWhileShortcutHeld()
+                }
             }
         )
+    }
+
+    private func handleOtherKeyDownWhileShortcutHeld() async {
+        guard isShortcutPressed else { return }
+
+        wasCancelledByOtherKey = true
+        logger.notice("handleOtherKeyDownWhileShortcutHeld: cancelling shortcut (non-trigger key pressed while shortcut held)")
+        await recorderUIManager.cancelRecording()
     }
 
     private func recordingMode(for action: ShortcutAction) -> Mode? {
@@ -266,6 +280,7 @@ class RecordingShortcutManager: ObservableObject {
         isShortcutPressed = false
         shortcutPressStartTime = nil
         isHandsFreeRecording = false
+        wasCancelledByOtherKey = false
     }
     
     private func handleShortcutKeyDown(eventTime: TimeInterval, mode: Mode) async {
@@ -307,6 +322,13 @@ class RecordingShortcutManager: ObservableObject {
     private func handleShortcutKeyUp(eventTime: TimeInterval, mode: Mode) async {
         guard isShortcutPressed else { return }
         isShortcutPressed = false
+
+        if wasCancelledByOtherKey {
+            wasCancelledByOtherKey = false
+            isHandsFreeRecording = false
+            shortcutPressStartTime = nil
+            return
+        }
 
         switch mode {
         case .toggle:
