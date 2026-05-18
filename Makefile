@@ -192,6 +192,9 @@ upload-r2: sparkle-sign
 	op run --env-file .env.op -- bash -c 'curl -s -X PUT "https://$$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com/$$R2_BUCKET_NAME/VoiceInk-$(VERSION).dmg" \
 		--aws-sigv4 "aws:amz:auto:s3" -u "$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY" \
 		-H "Content-Type: application/octet-stream" --data-binary @"$(DMG_FILE)"'
+	op run --env-file .env.op -- bash -c 'curl -s -X PUT "https://$$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com/$$R2_BUCKET_NAME/VoiceInk-latest.dmg" \
+		--aws-sigv4 "aws:amz:auto:s3" -u "$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY" \
+		-H "Content-Type: application/octet-stream" --data-binary @"$(DMG_FILE)"'
 	@echo "DMG uploaded to R2"
 
 upload-appcast: upload-r2
