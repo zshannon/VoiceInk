@@ -12,7 +12,7 @@ APP_PATH := $(EXPORT_PATH)/VoiceInk.app
 TEAM_ID := NRD52JHX45
 KEYCHAIN_PROFILE := AC_PASSWORD
 
-.PHONY: all clean whisper setup build local check healthcheck help dev run archive export notarize dmg release sparkle-sign upload-r2 upload-appcast publish bump
+.PHONY: all clean whisper setup build local check healthcheck help dev run archive export notarize dmg release sparkle-sign upload-r2 upload-appcast github-release publish bump
 
 # Default target
 all: check build
@@ -211,10 +211,21 @@ upload-appcast: upload-r2
 		-H "Content-Type: application/xml" --data-binary @"$(BUILD_DIR)/appcast.xml"'
 	@echo "Appcast uploaded to R2"
 
-publish: upload-appcast
-	@echo "Release published to R2!"
+github-release: upload-appcast
+	@echo "Creating GitHub release..."
+	$(eval VERSION := $(shell /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$(APP_PATH)/Contents/Info.plist"))
+	$(eval DMG_FILE := $(BUILD_DIR)/VoiceInk-$(VERSION).dmg)
+	@command -v gh >/dev/null 2>&1 || { echo "gh CLI not installed (brew install gh)"; exit 1; }
+	gh release create v$(VERSION) "$(DMG_FILE)" \
+		--title "v$(VERSION)" \
+		--generate-notes
+	@echo "GitHub release v$(VERSION) created"
+
+publish: github-release
+	@echo "Release published to R2 and GitHub!"
 	@op run --env-file .env.op -- sh -c 'echo "DMG: $$R2_PUBLIC_URL/VoiceInk-$(VERSION).dmg"'
 	@op run --env-file .env.op -- sh -c 'echo "Appcast: $$R2_PUBLIC_URL/appcast.xml"'
+	@gh release view v$(VERSION) --json url --jq '"GitHub: " + .url'
 
 # Version management
 bump:
@@ -251,7 +262,8 @@ help:
 	@echo "  sparkle-sign       Sign DMG with Sparkle EdDSA key"
 	@echo "  upload-r2          Upload DMG to Cloudflare R2"
 	@echo "  upload-appcast     Generate and upload appcast.xml to R2"
-	@echo "  publish            Full publish (dmg->sign->upload->appcast)"
+	@echo "  github-release     Create GitHub release and attach DMG"
+	@echo "  publish            Full publish (dmg->sign->upload->appcast->github-release)"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  clean              Remove dependencies"
