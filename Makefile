@@ -211,12 +211,19 @@ upload-appcast: upload-r2
 		-H "Content-Type: application/xml" --data-binary @"$(BUILD_DIR)/appcast.xml"'
 	@echo "Appcast uploaded to R2"
 
+GITHUB_REPO := zshannon/VoiceInk
+GH_TOKEN_OP_REF := op://Private/Github Personal Access Token/token
+
 github-release: upload-appcast
 	@echo "Creating GitHub release..."
 	$(eval VERSION := $(shell /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$(APP_PATH)/Contents/Info.plist"))
 	$(eval DMG_FILE := $(BUILD_DIR)/VoiceInk-$(VERSION).dmg)
+	$(eval RELEASE_SHA := $(shell git rev-parse HEAD))
 	@command -v gh >/dev/null 2>&1 || { echo "gh CLI not installed (brew install gh)"; exit 1; }
-	gh release create v$(VERSION) "$(DMG_FILE)" \
+	@command -v op >/dev/null 2>&1 || { echo "1Password CLI (op) not installed"; exit 1; }
+	GH_TOKEN=$$(op read "$(GH_TOKEN_OP_REF)") gh release create v$(VERSION) "$(DMG_FILE)" \
+		--repo $(GITHUB_REPO) \
+		--target $(RELEASE_SHA) \
 		--title "v$(VERSION)" \
 		--generate-notes
 	@echo "GitHub release v$(VERSION) created"
@@ -225,7 +232,7 @@ publish: github-release
 	@echo "Release published to R2 and GitHub!"
 	@op run --env-file .env.op -- sh -c 'echo "DMG: $$R2_PUBLIC_URL/VoiceInk-$(VERSION).dmg"'
 	@op run --env-file .env.op -- sh -c 'echo "Appcast: $$R2_PUBLIC_URL/appcast.xml"'
-	@gh release view v$(VERSION) --json url --jq '"GitHub: " + .url'
+	@GH_TOKEN=$$(op read "$(GH_TOKEN_OP_REF)") gh release view v$(VERSION) --repo $(GITHUB_REPO) --json url --jq '"GitHub: " + .url'
 
 # Version management
 bump:
