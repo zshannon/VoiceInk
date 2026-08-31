@@ -6,7 +6,6 @@ class SoundManager: ObservableObject {
     static let shared = SoundManager()
 
     private let playbackEngine = SoundPlaybackEngine()
-    @AppStorage("isSoundFeedbackEnabled") private var isSoundFeedbackEnabled = true
 
     private init() {
         setupSounds()
@@ -20,42 +19,32 @@ class SoundManager: ObservableObject {
     }
 
     private func setupSounds() {
+        let customSoundManager = CustomSoundManager.shared
         playbackEngine.setup(
-            defaultStartURL: Bundle.main.url(forResource: "recstart", withExtension: "mp3"),
-            defaultStopURL: Bundle.main.url(forResource: "recstop", withExtension: "mp3"),
-            defaultEscURL: Bundle.main.url(forResource: "esc", withExtension: "wav"),
-            customStartURL: CustomSoundManager.shared.getCustomSoundURL(for: .start),
-            customStopURL: CustomSoundManager.shared.getCustomSoundURL(for: .stop)
+            defaultStartURL: customSoundManager.builtInSoundURL(for: .start),
+            defaultStopURL: customSoundManager.builtInSoundURL(for: .stop),
+            defaultEscURL: CustomSoundManager.BuiltInSound.sound7.bundleURL,
+            customStartURL: customSoundManager.getCustomSoundURL(for: .start),
+            customStopURL: customSoundManager.getCustomSoundURL(for: .stop)
         )
     }
 
     @objc private func reloadCustomSounds() {
-        playbackEngine.reloadCustomSounds(
-            startURL: CustomSoundManager.shared.getCustomSoundURL(for: .start),
-            stopURL: CustomSoundManager.shared.getCustomSoundURL(for: .stop)
-        )
+        setupSounds()
     }
 
     func playStartSound() {
-        guard isSoundFeedbackEnabled else { return }
+        guard CustomSoundManager.shared.isSoundEnabled(for: .start) else { return }
         playbackEngine.playStartSound()
     }
 
     func playStopSound() {
-        guard isSoundFeedbackEnabled else { return }
+        guard CustomSoundManager.shared.isSoundEnabled(for: .stop) else { return }
         playbackEngine.playStopSound()
     }
-    
+
     func playEscSound() {
-        guard isSoundFeedbackEnabled else { return }
+        guard CustomSoundManager.shared.hasAnyRecordingSoundEnabled else { return }
         playbackEngine.playEscSound()
     }
-    
-    var isEnabled: Bool {
-        get { isSoundFeedbackEnabled }
-        set {
-            objectWillChange.send()
-            isSoundFeedbackEnabled = newValue
-        }
-    }
-} 
+}

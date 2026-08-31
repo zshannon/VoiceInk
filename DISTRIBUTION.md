@@ -88,7 +88,7 @@ xcrun notarytool store-credentials "AC_PASSWORD" \
 Run the complete pipeline (archive → export → notarize → DMG):
 
 ```bash
-make release
+make zcs-release
 ```
 
 This creates `build/VoiceInk-{version}.dmg` ready for distribution.

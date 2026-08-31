@@ -4,13 +4,20 @@ import SwiftUI
 
 struct ShortcutRecorder: View {
     let action: ShortcutAction
+    let defaultShortcut: Shortcut?
     let onShortcutChanged: () -> Void
 
     @StateObject private var recorder = ShortcutRecorderModel()
+    @State private var recorderID = UUID()
     @State private var shortcut: Shortcut?
 
-    init(action: ShortcutAction, onShortcutChanged: @escaping () -> Void = {}) {
+    init(
+        action: ShortcutAction,
+        defaultShortcut: Shortcut? = nil,
+        onShortcutChanged: @escaping () -> Void = {}
+    ) {
         self.action = action
+        self.defaultShortcut = defaultShortcut
         self.onShortcutChanged = onShortcutChanged
         _shortcut = State(initialValue: ShortcutStore.shortcut(for: action))
     }
@@ -21,6 +28,10 @@ struct ShortcutRecorder: View {
                 if recorder.isRecording {
                     recorder.cancel()
                 } else {
+                    NotificationCenter.default.post(
+                        name: Self.shortcutRecordingDidStart,
+                        object: recorderID
+                    )
                     clearShortcutBeforeRecording()
                     recorder.start(action: action) { newShortcut in
                         shortcut = newShortcut
@@ -29,7 +40,7 @@ struct ShortcutRecorder: View {
                 }
             } label: {
                 ShortcutVisualization(
-                    shortcut: recorder.isRecording ? recorder.previewShortcut : shortcut,
+                    shortcut: displayedShortcut,
                     isRecording: recorder.isRecording
                 )
             }
@@ -42,6 +53,15 @@ struct ShortcutRecorder: View {
             guard let changedAction = notification.object as? ShortcutAction, changedAction == action else { return }
             shortcut = ShortcutStore.shortcut(for: action)
         }
+        .onReceive(NotificationCenter.default.publisher(for: Self.shortcutRecordingDidStart)) { notification in
+            guard let activeRecorderID = notification.object as? UUID, activeRecorderID != recorderID else { return }
+            recorder.cancel()
+        }
+        .onChange(of: action) { _, newAction in
+            recorder.cancel()
+            recorderID = UUID()
+            shortcut = ShortcutStore.shortcut(for: newAction)
+        }
         .onDisappear {
             recorder.cancel()
         }
@@ -49,10 +69,18 @@ struct ShortcutRecorder: View {
 
     private var accessibilityLabel: String {
         if recorder.isRecording {
-            return recorder.previewShortcut?.displayString ?? "Press shortcut"
+            return recorder.previewShortcut?.displayString ?? String(localized: "Press shortcut")
         }
 
-        return shortcut?.displayString ?? "Record shortcut"
+        return displayedShortcut?.displayString ?? String(localized: "Record shortcut")
+    }
+
+    private var displayedShortcut: Shortcut? {
+        if recorder.isRecording {
+            return recorder.previewShortcut
+        }
+
+        return shortcut ?? defaultShortcut
     }
 
     private func clearShortcutBeforeRecording() {
@@ -60,6 +88,8 @@ struct ShortcutRecorder: View {
         shortcut = nil
         onShortcutChanged()
     }
+
+    private static let shortcutRecordingDidStart = Notification.Name("ShortcutRecorderRecordingDidStart")
 }
 
 private struct ShortcutVisualization: View {
@@ -73,13 +103,7 @@ private struct ShortcutVisualization: View {
                     ShortcutKeyCap(title: token, isRecording: isRecording)
                 }
             } else {
-                if isRecording {
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 5, height: 5)
-                }
-
-                Text(isRecording ? "Press shortcut" : "Record")
+                Text(isRecording ? LocalizedStringKey("Press shortcut") : LocalizedStringKey("Record"))
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -91,11 +115,11 @@ private struct ShortcutVisualization: View {
         .fixedSize(horizontal: true, vertical: false)
         .background {
             RoundedRectangle(cornerRadius: 6)
-                .fill(isRecording ? Color.accentColor.opacity(0.14) : Color(NSColor.controlBackgroundColor))
+                .fill(isRecording ? AppTheme.Accent.fill : AppTheme.Surface.control)
         }
         .overlay {
             RoundedRectangle(cornerRadius: 6)
-                .stroke(isRecording ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.25), lineWidth: 1)
+                .stroke(isRecording ? AppTheme.Accent.border : AppTheme.Border.subtle, lineWidth: 1)
         }
     }
 }
@@ -131,7 +155,7 @@ private struct ShortcutKeyCap: View {
     }
 
     private var borderColor: Color {
-        isRecording ? Color.accentColor.opacity(0.65) : foregroundColor.opacity(0.28)
+        isRecording ? AppTheme.Accent.foreground : foregroundColor.opacity(0.28)
     }
 }
 
@@ -254,8 +278,9 @@ final class ShortcutRecorderModel: ObservableObject {
         let modifiers = Shortcut.normalizedModifierFlags(modifierFlags, forKeyCode: keyCode)
 
         if modifiers.isEmpty,
-           Shortcut.isFunctionKeyCode(keyCode),
-           Shortcut.normalizedModifierFlags(modifierFlags, forKeyCode: nil).contains(.function) {
+            Shortcut.isFunctionKeyCode(keyCode),
+            Shortcut.normalizedModifierFlags(modifierFlags, forKeyCode: nil).contains(.function)
+        {
             return true
         }
 
