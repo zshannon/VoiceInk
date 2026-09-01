@@ -12,7 +12,7 @@ APP_PATH := $(EXPORT_PATH)/VoiceInk.app
 TEAM_ID := NRD52JHX45
 KEYCHAIN_PROFILE := AC_PASSWORD
 
-.PHONY: all clean whisper setup build local check healthcheck help dev run archive export notarize dmg release sparkle-sign upload-r2 upload-appcast github-release publish bump
+.PHONY: all clean whisper setup build local check healthcheck help dev run archive export notarize dmg release test-release-config zcs-release release-setup sparkle-sign upload-r2 upload-appcast github-release publish bump
 
 # Default target
 all: check build
@@ -63,7 +63,7 @@ local: check setup
 		CODE_SIGNING_REQUIRED=NO \
 		CODE_SIGNING_ALLOWED=YES \
 		DEVELOPMENT_TEAM="" \
-		CODE_SIGN_ENTITLEMENTS=$(CURDIR)/VoiceInk/VoiceInk.local.entitlements \
+		CODE_SIGN_ENTITLEMENTS="$(CURDIR)/VoiceInk/VoiceInk.local.entitlements" \
 		SWIFT_ACTIVE_COMPILATION_CONDITIONS='$$(inherited) LOCAL_BUILD' \
 		build
 	@APP_PATH="$(LOCAL_DERIVED_DATA)/Build/Products/Debug/VoiceInk.app" && \
@@ -101,6 +101,21 @@ run:
 			exit 1; \
 		fi; \
 	fi
+
+# Build a signed, notarized DMG and matching local Sparkle Appcast.
+release: whisper
+	@if [ -n "$(NOTES)" ]; then \
+		./scripts/release.sh --notes "$(NOTES)" $(RELEASE_ARGS); \
+	else \
+		./scripts/release.sh $(RELEASE_ARGS); \
+	fi
+
+test-release-config:
+	@bash ./scripts/test-release-config.sh
+
+# Store Apple's notarization credentials securely in Keychain.
+release-setup:
+	@./scripts/setup-release-notarization.sh
 
 # Cleanup
 clean:
@@ -173,7 +188,7 @@ dmg: notarize
 		$(BUILD_DIR)/VoiceInk-$(VERSION).dmg
 	@echo "DMG created: $(BUILD_DIR)/VoiceInk-$(VERSION).dmg"
 
-release: dmg
+zcs-release: dmg
 	@echo "Release build complete!"
 	@ls -la $(BUILD_DIR)/*.dmg
 
@@ -255,6 +270,8 @@ help:
 	@echo "  local              Build for local use (no Apple Developer certificate needed)"
 	@echo "  run                Launch the built VoiceInk app"
 	@echo "  dev                Build and run the app (for development)"
+	@echo "  release            Build DMG and Appcast using release-notes/<version>.html"
+	@echo "  release-setup      Store notarization credentials in Keychain"
 	@echo "  all                Run full build process (default)"
 	@echo ""
 	@echo "Distribution:"
@@ -262,7 +279,7 @@ help:
 	@echo "  export             Export signed app from archive"
 	@echo "  notarize           Submit to Apple and staple ticket"
 	@echo "  dmg                Create signed DMG"
-	@echo "  release            Full distribution build (archive->export->notarize->dmg)"
+	@echo "  zcs-release        Fork distribution build (archive->export->notarize->dmg)"
 	@echo ""
 	@echo "Publishing (requires .env.op with 1Password refs):"
 	@echo "  bump               Bump version number (1.70 -> 1.71)"

@@ -1,31 +1,38 @@
 import Foundation
+import LLMkit
 
 struct ReasoningConfig {
-    // Gemini Flash models support "none" to turn off thinking.
-    static let geminiNoneReasoningModels: Set<String> = [
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite"
+    // These models support "minimal", optimized for low-latency instruction following.
+    static let geminiMinimalThinkingModels: Set<String> = [
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
     ]
 
-    // Gemini 3.1 Pro maps "minimal" to "low"; send "low" directly.
-    static let geminiLowReasoningModels: Set<String> = [
-        "gemini-3.1-pro-preview"
+    // Gemini 3.1 Pro does not support "minimal".
+    static let geminiLowThinkingModels: Set<String> = [
+        "gemini-3.1-pro-preview",
     ]
 
-    // These Gemini models only go down to "minimal".
-    static let geminiMinimalReasoningModels: Set<String> = [
-        "gemini-2.5-pro",
-        "gemini-3-flash-preview",
-        "gemini-3.1-flash-lite"
-    ]
+    // Gemini 2.5 Flash-Lite is intentionally omitted because its Interactions
+    // API default has thinking off.
+    static func geminiThinkingLevel(for modelName: String) -> GeminiThinkingLevel? {
+        if geminiMinimalThinkingModels.contains(modelName) {
+            return .minimal
+        }
+        if geminiLowThinkingModels.contains(modelName) {
+            return .low
+        }
+        return nil
+    }
 
-    // OpenAI GPT-5.x models support explicit "none"; GPT-4.1 models need no param.
+    // OpenAI GPT-5 models support explicit "none"; GPT-4.1 models need no param.
     static let openAINoneReasoningModels: Set<String> = [
         "gpt-5.5",
         "gpt-5.4",
         "gpt-5.4-mini",
         "gpt-5.4-nano",
-        "gpt-5.2"
     ]
 
     // Cerebras GPT-OSS has no true "none"; use lowest effort.
@@ -36,7 +43,7 @@ struct ReasoningConfig {
     // Groq GPT-OSS has no true "none"; use lowest effort.
     static let groqGPTOSSMinimumReasoningModels: Set<String> = [
         "openai/gpt-oss-120b",
-        "openai/gpt-oss-20b"
+        "openai/gpt-oss-20b",
     ]
 
     // Cerebras GLM supports "none".
@@ -44,25 +51,18 @@ struct ReasoningConfig {
         "zai-glm-4.7"
     ]
 
-    // Groq Qwen uses "none" to disable thinking.
-    static let groqQwenReasoningModels: Set<String> = [
-        "qwen/qwen3-32b"
-    ]
-
     static func getReasoningParameter(for provider: AIProvider, modelName: String) -> String? {
         switch provider {
-        case .gemini:
-            if geminiNoneReasoningModels.contains(modelName) { return "none" }
-            else if geminiLowReasoningModels.contains(modelName) { return "low" }
-            else if geminiMinimalReasoningModels.contains(modelName) { return "minimal" }
         case .openAI:
             if openAINoneReasoningModels.contains(modelName) { return "none" }
         case .cerebras:
-            if cerebrasGPTOSSMinimumReasoningModels.contains(modelName) { return "low" }
-            else if cerebrasNoneReasoningModels.contains(modelName) { return "none" }
+            if cerebrasGPTOSSMinimumReasoningModels.contains(modelName) {
+                return "low"
+            } else if cerebrasNoneReasoningModels.contains(modelName) {
+                return "none"
+            }
         case .groq:
             if groqGPTOSSMinimumReasoningModels.contains(modelName) { return "low" }
-            else if groqQwenReasoningModels.contains(modelName) { return "none" }
         default:
             return nil
         }
