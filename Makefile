@@ -12,7 +12,7 @@ APP_PATH := $(EXPORT_PATH)/VoiceInk.app
 TEAM_ID := NRD52JHX45
 KEYCHAIN_PROFILE := AC_PASSWORD
 
-.PHONY: all clean whisper setup build local check healthcheck help dev run archive export notarize dmg release zcs-release release-setup sparkle-sign upload-r2 upload-appcast github-release publish bump
+.PHONY: all clean whisper setup build local check healthcheck help dev run archive export notarize dmg release test-release-config zcs-release release-setup sparkle-sign upload-r2 upload-appcast github-release publish bump
 
 # Default target
 all: check build
@@ -109,6 +109,9 @@ release: whisper
 	else \
 		./scripts/release.sh $(RELEASE_ARGS); \
 	fi
+
+test-release-config:
+	@bash ./scripts/test-release-config.sh
 
 # Store Apple's notarization credentials securely in Keychain.
 release-setup:
