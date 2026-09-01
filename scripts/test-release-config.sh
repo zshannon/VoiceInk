@@ -7,6 +7,7 @@ RELEASE_SCRIPT="$SCRIPT_DIR/release.sh"
 DMG_NOTARIZER="$SCRIPT_DIR/notarize-dmg.sh"
 MAKEFILE="$SCRIPT_DIR/../Makefile"
 PROJECT="$SCRIPT_DIR/../VoiceInk.xcodeproj"
+SOURCE_INFO_PLIST="$SCRIPT_DIR/../VoiceInk/Info.plist"
 REAL_XCODEBUILD="$(command -v xcodebuild)"
 TEST_ROOT="$(mktemp -d /tmp/voiceink-release-config.XXXXXX)"
 BIN_DIR="$TEST_ROOT/bin"
@@ -44,6 +45,17 @@ assert_success() {
     if [[ "$status" != "0" ]]; then
         printf '%s\n' "$output" >&2
         fail "$context (expected exit 0, got $status)"
+    fi
+}
+
+assert_failure() {
+    local status="$1"
+    local output="$2"
+    local context="$3"
+
+    if [[ "$status" == "0" ]]; then
+        printf '%s\n' "$output" >&2
+        fail "$context (expected a non-zero exit)"
     fi
 }
 
@@ -131,6 +143,25 @@ cat > "$MAKE_WORK_DIR/build/export/VoiceInk.app/Contents/Info.plist" <<'EOF'
 EOF
 
 set +e
+make_license_output="$(make -C "$MAKE_WORK_DIR" -f "$MAKEFILE" verify-fork-license-policy 2>&1)"
+make_license_status=$?
+set -e
+assert_failure "$make_license_status" "$make_license_output" \
+    "Makefile accepted an app that enforces licensing"
+[[ "$make_license_output" == *"license enforcement must be disabled"* ]] || \
+    fail "Makefile did not explain the license enforcement failure"
+
+/usr/libexec/PlistBuddy -c 'Add :ZCSLicenseEnforcementDisabled bool true' \
+    "$MAKE_WORK_DIR/build/export/VoiceInk.app/Contents/Info.plist"
+
+set +e
+make_license_output="$(make -C "$MAKE_WORK_DIR" -f "$MAKEFILE" verify-fork-license-policy 2>&1)"
+make_license_status=$?
+set -e
+assert_success "$make_license_status" "$make_license_output" \
+    "Makefile rejected an app with license enforcement disabled"
+
+set +e
 dmg_plan="$(make -C "$MAKE_WORK_DIR" -f "$MAKEFILE" -n dmg 2>&1)"
 dmg_plan_status=$?
 set -e
@@ -162,6 +193,9 @@ release_style="$(printf '%s\n' "$release_settings" | awk -F ' = ' '/^[[:space:]]
     fail "VoiceInk Release target did not select the Developer ID provisioning profile"
 [[ "$release_style" == "Manual" ]] || \
     fail "VoiceInk Release target did not use manual signing"
+source_license_enforcement_disabled="$(plutil -extract ZCSLicenseEnforcementDisabled raw "$SOURCE_INFO_PLIST")"
+[[ "$source_license_enforcement_disabled" == "true" ]] || \
+    fail "VoiceInk app metadata did not disable license enforcement"
 
 COMMON_ENV=(
     "PATH=$BIN_DIR:$PATH"
@@ -205,6 +239,24 @@ cat > "$FAKE_APP/Contents/Info.plist" <<'EOF'
 </plist>
 EOF
 printf '<p>Release notes</p>\n' > "$TEST_ROOT/notes.html"
+
+set +e
+unsafe_license_output="$(env "${COMMON_ENV[@]}" \
+    "$RELEASE_SCRIPT" \
+    --app "$FAKE_APP" \
+    --notes "$TEST_ROOT/notes.html" \
+    --output-dir "$TEST_ROOT/unsafe-license-output" \
+    --skip-notarization \
+    --allow-dirty 2>&1)"
+unsafe_license_status=$?
+set -e
+assert_status 1 "$unsafe_license_status" "$unsafe_license_output" \
+    "release accepted an app that enforces licensing"
+[[ "$unsafe_license_output" == *"license enforcement must be disabled"* ]] || \
+    fail "release did not explain the license enforcement failure"
+
+/usr/libexec/PlistBuddy -c 'Add :ZCSLicenseEnforcementDisabled bool true' \
+    "$FAKE_APP/Contents/Info.plist"
 
 set +e
 identity_output="$(env "${COMMON_ENV[@]}" \

@@ -14,7 +14,7 @@ KEYCHAIN_PROFILE := AC_PASSWORD
 DEVELOPER_IDENTITY := 555066E4A3E7123BE9E073B0A7E3AE1F355669A1
 DEVELOPER_ID_PROFILE := VoiceInk Developer ID
 
-.PHONY: all clean whisper setup build local check healthcheck help dev run archive export notarize dmg release test-release-config zcs-release release-setup sparkle-sign upload-r2 upload-appcast github-release publish bump
+.PHONY: all clean whisper setup build local check healthcheck help dev run archive export notarize dmg release test-release-config verify-fork-license-policy zcs-release release-setup sparkle-sign upload-r2 upload-appcast github-release publish bump
 
 # Default target
 all: check build
@@ -115,6 +115,13 @@ release: whisper
 test-release-config:
 	@bash ./scripts/test-release-config.sh
 
+verify-fork-license-policy:
+	@LICENSE_DISABLED="$$(/usr/libexec/PlistBuddy -c 'Print :ZCSLicenseEnforcementDisabled' "$(APP_PATH)/Contents/Info.plist" 2>/dev/null || true)"; \
+		if [ "$$LICENSE_DISABLED" != "true" ]; then \
+			echo "Error: VoiceInk license enforcement must be disabled for fork releases." >&2; \
+			exit 1; \
+		fi
+
 # Store Apple's notarization credentials securely in Keychain.
 release-setup:
 	@./scripts/setup-release-notarization.sh
@@ -193,11 +200,13 @@ dmg: notarize
 	@echo "DMG created: $(BUILD_DIR)/VoiceInk-$(VERSION).dmg"
 
 zcs-release: dmg
+	@$(MAKE) verify-fork-license-policy
 	@echo "Release build complete!"
 	@ls -la $(BUILD_DIR)/*.dmg
 
 # Sparkle signing and R2 upload
 sparkle-sign:
+	@$(MAKE) verify-fork-license-policy
 	@echo "Signing DMG with Sparkle..."
 	$(eval VERSION := $(shell /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$(APP_PATH)/Contents/Info.plist"))
 	$(eval DMG_FILE := $(BUILD_DIR)/VoiceInk-$(VERSION).dmg)

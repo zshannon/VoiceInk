@@ -28,16 +28,25 @@ class LicenseViewModel: ObservableObject {
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "LicenseViewModel")
     private let userDefaults = UserDefaults.standard
     private let licenseManager = LicenseManager.shared
+    private let licenseEnforcementDisabled: Bool
 
-    init() {
+    init(licenseEnforcementDisabled: Bool? = nil) {
         #if LOCAL_BUILD
-            licenseState = .licensed
+            self.licenseEnforcementDisabled = true
         #else
-            loadLicenseState()
+            self.licenseEnforcementDisabled = licenseEnforcementDisabled
+                ?? (Bundle.main.object(forInfoDictionaryKey: "ZCSLicenseEnforcementDisabled") as? Bool == true)
         #endif
+
+        loadLicenseState()
     }
 
     func startTrial() {
+        guard !licenseEnforcementDisabled else {
+            licenseState = .licensed
+            return
+        }
+
         let didStartTrial = licenseManager.startTrialIfNeeded()
         refreshTrialState()
         NotificationCenter.default.post(name: .licenseStatusChanged, object: nil)
@@ -48,6 +57,11 @@ class LicenseViewModel: ObservableObject {
     }
 
     private func loadLicenseState() {
+        guard !licenseEnforcementDisabled else {
+            licenseState = .licensed
+            return
+        }
+
         // Check for existing license key
         if let storedLicenseKey = licenseManager.licenseKey {
             self.licenseKey = storedLicenseKey

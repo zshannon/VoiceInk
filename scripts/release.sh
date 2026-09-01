@@ -278,6 +278,7 @@ MINIMUM_SYSTEM_VERSION="$(read_plist_value "$INFO_PLIST" LSMinimumSystemVersion)
 BUNDLE_ID="$(read_plist_value "$INFO_PLIST" CFBundleIdentifier)"
 FEED_URL="$(read_plist_value "$INFO_PLIST" SUFeedURL)"
 APP_PUBLIC_KEY="$(read_plist_value "$INFO_PLIST" SUPublicEDKey)"
+LICENSE_ENFORCEMENT_DISABLED="$(plutil -extract ZCSLicenseEnforcementDisabled raw "$INFO_PLIST" 2>/dev/null || true)"
 RELEASE_TAG="v$SHORT_VERSION"
 DOWNLOAD_URL="$RELEASE_BASE_URL/$RELEASE_TAG/VoiceInk.dmg"
 
@@ -296,6 +297,8 @@ case "$NOTES_EXTENSION" in
 esac
 
 [[ "$BUNDLE_ID" == "$EXPECTED_BUNDLE_ID" ]] || fail "Unexpected bundle identifier: $BUNDLE_ID"
+[[ "$LICENSE_ENFORCEMENT_DISABLED" == "true" ]] \
+    || fail "VoiceInk license enforcement must be disabled for fork releases"
 [[ "$FEED_URL" == "$EXPECTED_FEED_URL" ]] || fail "Unexpected Sparkle feed URL: $FEED_URL"
 [[ "$MINIMUM_SYSTEM_VERSION" == "$EXPECTED_MINIMUM_SYSTEM_VERSION" ]] \
     || fail "Unexpected minimum system version: $MINIMUM_SYSTEM_VERSION (expected $EXPECTED_MINIMUM_SYSTEM_VERSION)"

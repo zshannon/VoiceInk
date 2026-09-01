@@ -10,8 +10,25 @@ import Testing
 
 struct VoiceInkTests {
 
-    @Test func example() async throws {
-        // Write your test here and use APIs like `#expect(...)` to check expected conditions.
+    @Test @MainActor
+    func forkBuildDisablesLicenseEnforcement() {
+        let viewModel = LicenseViewModel(licenseEnforcementDisabled: true)
+
+        #expect(viewModel.licenseState == .licensed)
+        #expect(viewModel.canUseApp)
+        #expect(viewModel.usageRestrictionMessage == nil)
+
+        viewModel.startTrial()
+
+        #expect(viewModel.licenseState == .licensed)
+        #expect(viewModel.canUseApp)
+        #expect(viewModel.usageRestrictionMessage == nil)
+
+        viewModel.refreshLicenseState()
+
+        #expect(viewModel.licenseState == .licensed)
+        #expect(viewModel.canUseApp)
+        #expect(viewModel.usageRestrictionMessage == nil)
     }
 
 }

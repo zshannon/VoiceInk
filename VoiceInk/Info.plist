@@ -8,6 +8,8 @@
 	<string>https://voice-ink-releases.zcs.me/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>Dhh98fxzkvF5fFhhZxoet9lCGa6RjfaNF+/xYE3QVjQ=</string>
+	<key>ZCSLicenseEnforcementDisabled</key>
+	<true/>
 	<key>LSUIElement</key>
 	<false/>
 	<key>SUEnableAutomaticChecks</key>
