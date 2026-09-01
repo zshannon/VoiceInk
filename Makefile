@@ -11,6 +11,8 @@ EXPORT_PATH := $(BUILD_DIR)/export
 APP_PATH := $(EXPORT_PATH)/VoiceInk.app
 TEAM_ID := NRD52JHX45
 KEYCHAIN_PROFILE := AC_PASSWORD
+DEVELOPER_IDENTITY := 555066E4A3E7123BE9E073B0A7E3AE1F355669A1
+DEVELOPER_ID_PROFILE := VoiceInk Developer ID
 
 .PHONY: all clean whisper setup build local check healthcheck help dev run archive export notarize dmg release test-release-config zcs-release release-setup sparkle-sign upload-r2 upload-appcast github-release publish bump
 
@@ -136,7 +138,6 @@ archive: setup
 		-scheme VoiceInk \
 		-configuration Release \
 		-archivePath $(ARCHIVE_PATH) \
-		-allowProvisioningUpdates \
 		archive
 
 export: archive
@@ -148,9 +149,9 @@ export: archive
 	@echo '<key>method</key><string>developer-id</string>' >> $(BUILD_DIR)/ExportOptions.plist
 	@echo '<key>teamID</key><string>$(TEAM_ID)</string>' >> $(BUILD_DIR)/ExportOptions.plist
 	@echo '<key>signingStyle</key><string>manual</string>' >> $(BUILD_DIR)/ExportOptions.plist
-	@echo '<key>signingCertificate</key><string>Developer ID Application</string>' >> $(BUILD_DIR)/ExportOptions.plist
+	@echo '<key>signingCertificate</key><string>$(DEVELOPER_IDENTITY)</string>' >> $(BUILD_DIR)/ExportOptions.plist
 	@echo '<key>provisioningProfiles</key><dict>' >> $(BUILD_DIR)/ExportOptions.plist
-	@echo '<key>me.zcs.VoiceInk</key><string>VoiceInk Developer ID</string>' >> $(BUILD_DIR)/ExportOptions.plist
+	@echo '<key>me.zcs.VoiceInk</key><string>$(DEVELOPER_ID_PROFILE)</string>' >> $(BUILD_DIR)/ExportOptions.plist
 	@echo '</dict></dict></plist>' >> $(BUILD_DIR)/ExportOptions.plist
 	xcodebuild -exportArchive \
 		-archivePath $(ARCHIVE_PATH) \
@@ -184,8 +185,11 @@ dmg: notarize
 		$(BUILD_DIR)/VoiceInk-$(VERSION).dmg
 	@rm -rf $(BUILD_DIR)/dmg-staging
 	@echo "Signing DMG..."
-	codesign --force --sign "555066E4A3E7123BE9E073B0A7E3AE1F355669A1" \
+	codesign --force --sign "$(DEVELOPER_IDENTITY)" \
 		$(BUILD_DIR)/VoiceInk-$(VERSION).dmg
+	@./scripts/notarize-dmg.sh \
+		$(BUILD_DIR)/VoiceInk-$(VERSION).dmg \
+		"$(KEYCHAIN_PROFILE)"
 	@echo "DMG created: $(BUILD_DIR)/VoiceInk-$(VERSION).dmg"
 
 zcs-release: dmg

@@ -4,6 +4,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RELEASE_SCRIPT="$SCRIPT_DIR/release.sh"
+DMG_NOTARIZER="$SCRIPT_DIR/notarize-dmg.sh"
+MAKEFILE="$SCRIPT_DIR/../Makefile"
+PROJECT="$SCRIPT_DIR/../VoiceInk.xcodeproj"
+REAL_XCODEBUILD="$(command -v xcodebuild)"
 TEST_ROOT="$(mktemp -d /tmp/voiceink-release-config.XXXXXX)"
 BIN_DIR="$TEST_ROOT/bin"
 SPARKLE_BIN_DIR="$TEST_ROOT/sparkle-bin"
@@ -29,6 +33,17 @@ assert_status() {
     if [[ "$actual" != "$expected" ]]; then
         printf '%s\n' "$output" >&2
         fail "$context (expected exit $expected, got $actual)"
+    fi
+}
+
+assert_success() {
+    local status="$1"
+    local output="$2"
+    local context="$3"
+
+    if [[ "$status" != "0" ]]; then
+        printf '%s\n' "$output" >&2
+        fail "$context (expected exit 0, got $status)"
     fi
 }
 
@@ -79,6 +94,74 @@ done
 chmod +x "$BIN_DIR/security" "$BIN_DIR/codesign" "$BIN_DIR/create-dmg" \
     "$BIN_DIR/xcodebuild" "$SPARKLE_BIN_DIR/generate_appcast" \
     "$SPARKLE_BIN_DIR/generate_keys" "$SPARKLE_BIN_DIR/sign_update"
+
+MAKE_WORK_DIR="$TEST_ROOT/make-work"
+MAKE_BIN_DIR="$TEST_ROOT/make-bin"
+mkdir -p "$MAKE_WORK_DIR/.deps/whisper.cpp/build-apple/whisper.xcframework" \
+    "$MAKE_BIN_DIR"
+
+cat > "$MAKE_BIN_DIR/xcodebuild" <<'EOF'
+#!/usr/bin/env bash
+
+arguments=" $* "
+[[ "$arguments" == *" archive "* ]] || exit 51
+[[ "$arguments" != *" CODE_SIGN_STYLE="* ]] || exit 52
+[[ "$arguments" != *" DEVELOPMENT_TEAM="* ]] || exit 53
+[[ "$arguments" != *" CODE_SIGN_IDENTITY="* ]] || exit 54
+[[ "$arguments" != *" PROVISIONING_PROFILE_SPECIFIER="* ]] || exit 55
+[[ "$arguments" != *" -allowProvisioningUpdates "* ]] || exit 56
+EOF
+chmod +x "$MAKE_BIN_DIR/xcodebuild"
+
+set +e
+archive_output="$(PATH="$MAKE_BIN_DIR:$PATH" \
+    make -C "$MAKE_WORK_DIR" -f "$MAKEFILE" archive 2>&1)"
+archive_status=$?
+set -e
+assert_success "$archive_status" "$archive_output" \
+    "Makefile archive leaked app signing settings into Swift package targets"
+
+mkdir -p "$MAKE_WORK_DIR/build/export/VoiceInk.app/Contents"
+cat > "$MAKE_WORK_DIR/build/export/VoiceInk.app/Contents/Info.plist" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleShortVersionString</key><string>2.1</string>
+</dict></plist>
+EOF
+
+set +e
+dmg_plan="$(make -C "$MAKE_WORK_DIR" -f "$MAKEFILE" -n dmg 2>&1)"
+dmg_plan_status=$?
+set -e
+assert_success "$dmg_plan_status" "$dmg_plan" \
+    "Makefile could not produce the final DMG release plan"
+[[ "$dmg_plan" == *"./scripts/notarize-dmg.sh"* ]] || \
+    fail "Makefile DMG target did not invoke final DMG notarization"
+
+set +e
+release_settings="$($REAL_XCODEBUILD -project "$PROJECT" \
+    -target VoiceInk \
+    -configuration Release \
+    -showBuildSettings 2>&1)"
+release_settings_status=$?
+set -e
+assert_success "$release_settings_status" "$release_settings" \
+    "Xcode could not resolve the VoiceInk Release signing settings"
+
+release_team="$(printf '%s\n' "$release_settings" | awk -F ' = ' '/^[[:space:]]*DEVELOPMENT_TEAM = / { print $2; exit }')"
+release_identity="$(printf '%s\n' "$release_settings" | awk -F ' = ' '/^[[:space:]]*CODE_SIGN_IDENTITY = / { print $2; exit }')"
+release_profile="$(printf '%s\n' "$release_settings" | awk -F ' = ' '/^[[:space:]]*PROVISIONING_PROFILE_SPECIFIER = / { print $2; exit }')"
+release_style="$(printf '%s\n' "$release_settings" | awk -F ' = ' '/^[[:space:]]*CODE_SIGN_STYLE = / { print $2; exit }')"
+
+[[ "$release_team" == "NRD52JHX45" ]] || \
+    fail "VoiceInk Release target did not select the fork's Apple developer team"
+[[ "$release_identity" == "$FORK_SIGNING_IDENTITY" ]] || \
+    fail "VoiceInk Release target did not select the installed Developer ID certificate"
+[[ "$release_profile" == "VoiceInk Developer ID" ]] || \
+    fail "VoiceInk Release target did not select the Developer ID provisioning profile"
+[[ "$release_style" == "Manual" ]] || \
+    fail "VoiceInk Release target did not use manual signing"
 
 COMMON_ENV=(
     "PATH=$BIN_DIR:$PATH"
@@ -152,5 +235,45 @@ export_status=$?
 set -e
 assert_status 42 "$export_status" "$export_output" \
     "release export options did not select the fork's Apple developer team"
+
+DMG_BIN_DIR="$TEST_ROOT/dmg-bin"
+DMG_PATH="$TEST_ROOT/VoiceInk-2.1.dmg"
+NOTARY_LOG="$TEST_ROOT/notary.log"
+mkdir -p "$DMG_BIN_DIR"
+touch "$DMG_PATH"
+
+cat > "$DMG_BIN_DIR/xcrun" <<'EOF'
+#!/usr/bin/env bash
+printf 'xcrun %s\n' "$*" >> "$VOICEINK_NOTARY_TEST_LOG"
+EOF
+
+cat > "$DMG_BIN_DIR/spctl" <<'EOF'
+#!/usr/bin/env bash
+printf 'spctl %s\n' "$*" >> "$VOICEINK_NOTARY_TEST_LOG"
+EOF
+chmod +x "$DMG_BIN_DIR/xcrun" "$DMG_BIN_DIR/spctl"
+
+set +e
+dmg_notary_output="$(PATH="$DMG_BIN_DIR:$PATH" \
+    VOICEINK_NOTARY_TEST_LOG="$NOTARY_LOG" \
+    "$DMG_NOTARIZER" "$DMG_PATH" AC_PASSWORD 2>&1)"
+dmg_notary_status=$?
+set -e
+assert_success "$dmg_notary_status" "$dmg_notary_output" \
+    "final DMG was not submitted, stapled, and Gatekeeper-validated"
+
+expected_notary_log="$(cat <<EOF
+xcrun notarytool submit $DMG_PATH --keychain-profile AC_PASSWORD --wait
+xcrun stapler staple $DMG_PATH
+xcrun stapler validate $DMG_PATH
+spctl -a -t open --context context:primary-signature -vv $DMG_PATH
+EOF
+)"
+actual_notary_log="$(cat "$NOTARY_LOG")"
+[[ "$actual_notary_log" == "$expected_notary_log" ]] || {
+    printf 'Expected notarization operations:\n%s\n' "$expected_notary_log" >&2
+    printf 'Actual notarization operations:\n%s\n' "$actual_notary_log" >&2
+    fail "final DMG notarization operations were incomplete"
+}
 
 printf 'PASS: release configuration matches the fork\n'
