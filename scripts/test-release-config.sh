@@ -230,7 +230,7 @@ cat > "$FAKE_APP/Contents/Info.plist" <<'EOF'
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.4</string>
+    <string>15.0</string>
     <key>SUFeedURL</key>
     <string>https://voice-ink-releases.zcs.me/appcast.xml</string>
     <key>SUPublicEDKey</key>
