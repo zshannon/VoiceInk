@@ -60,15 +60,15 @@ enum AIProvider: String, CaseIterable {
     var defaultModel: String {
         switch self {
         case .cerebras:
-            return "gpt-oss-120b"
+            return "qwen-3.8-27b"
         case .groq:
-            return "openai/gpt-oss-120b"
+            return "qwen/qwen3.8-27b"
         case .gemini:
             return "gemini-3.8-flash"
         case .anthropic:
             return "claude-sonnet-5"
         case .openAI:
-            return "gpt-5.6-luna"
+            return "gpt-6-luna"
         case .mistral:
             return "mistral-small-latest"
         case .elevenLabs:
@@ -90,7 +90,7 @@ enum AIProvider: String, CaseIterable {
         case .custom:
             return CustomAIProviderManager.shared.defaultModelName
         case .openRouter:
-            return "openai/gpt-oss-120b"
+            return "qwen/qwen3.8-27b"
         }
     }
 
@@ -98,14 +98,14 @@ enum AIProvider: String, CaseIterable {
         switch self {
         case .cerebras:
             return [
-                "gpt-oss-120b",
                 "qwen-3.8-27b",
+                "gpt-oss-120b",
             ]
         case .groq:
             return [
+                "qwen/qwen3.8-27b",
                 "openai/gpt-oss-120b",
                 "openai/gpt-oss-20b",
-                "qwen/qwen3.8-27b",
             ]
         case .gemini:
             return [
@@ -125,6 +125,8 @@ enum AIProvider: String, CaseIterable {
             ]
         case .openAI:
             return [
+                "gpt-6-luna",
+                "gpt-6-sol",
                 "gpt-5.6-luna",
                 "gpt-5.6-terra",
                 "gpt-5.6-sol",
@@ -143,7 +145,7 @@ enum AIProvider: String, CaseIterable {
                 "mistral-large-latest",
             ]
         case .elevenLabs:
-            return ["scribe_v2"]
+            return ["scribe_v2", "scribe_v2_medical"]
         case .deepgram:
             return ["whisper-1"]
         case .soniox:
@@ -485,7 +487,8 @@ class AIService: ObservableObject {
         let availableModels = availableModels(for: provider)
         return provider.supportsCustomModelID || availableModels.contains(selectedModel)
             ? selectedModel
-            : availableModels.first ?? selectedModel
+            : (availableModels.contains(provider.defaultModel) ? provider.defaultModel : availableModels.first)
+                ?? selectedModel
     }
 
     private func loadSavedModelSelections() {
