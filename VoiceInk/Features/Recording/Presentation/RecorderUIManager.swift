@@ -221,6 +221,7 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     func toggleRecorderPanel(modeId: UUID? = nil) async {
         guard let engine = engine else { return }
+        guard !engine.isRecordingTransitionBlocked else { return }
 
         if isRecorderPanelVisible {
             switch engine.recordingState {
@@ -280,8 +281,8 @@ class RecorderUIManager: ObservableObject, RecorderPanelPresenting {
 
     func cancelRecording() async {
         guard let engine = engine else { return }
-        await engine.cancelRecording()
         await dismissRecorderPanel()
+        await engine.cancelRecording()
     }
 
     // MARK: - Notification Handling

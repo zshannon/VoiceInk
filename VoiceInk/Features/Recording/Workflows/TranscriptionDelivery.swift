@@ -4,6 +4,22 @@ import os
 @MainActor
 final class TranscriptionDelivery {
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "TranscriptionDelivery")
+    private let pasteAtCursor: @MainActor (String, @escaping @MainActor () -> Bool) async -> CursorPaster.PasteOutcome
+    private let selectedSendKey: @MainActor () -> FinishAndSendKey
+    private let sendKey: @MainActor (FinishAndSendKey) -> Void
+
+    init(
+        pasteAtCursor: @escaping @MainActor (String, @escaping @MainActor () -> Bool) async -> CursorPaster.PasteOutcome = {
+            text, shouldCancel in
+            await CursorPaster.startPasteAtCursor(text, shouldCancel: shouldCancel).value
+        },
+        selectedSendKey: @escaping @MainActor () -> FinishAndSendKey = { FinishAndSendSettings.selectedKey },
+        sendKey: @escaping @MainActor (FinishAndSendKey) -> Void = { CursorPaster.performSendKey($0) }
+    ) {
+        self.pasteAtCursor = pasteAtCursor
+        self.selectedSendKey = selectedSendKey
+        self.sendKey = sendKey
+    }
 
     struct Request {
         let transcription: Transcription
@@ -21,9 +37,11 @@ final class TranscriptionDelivery {
         let sendFollowUp: (String, Transcription) async -> Void
         let showResponse: (String, String?) async -> Void
         let failResponse: (String) async -> Void
+        let shouldCancel: @MainActor () -> Bool
     }
 
     func deliver(_ request: Request, actions: Actions) async {
+        guard !actions.shouldCancel() else { return }
         guard request.transcription.transcriptionStatus == TranscriptionStatus.completed.rawValue else {
             await actions.dismiss()
             return
@@ -98,16 +116,23 @@ final class TranscriptionDelivery {
         }
 
         let commandText = deliverableText(from: text)
-        let finishAndSendKey: FinishAndSendKey = item.sendAfterPaste ? FinishAndSendSettings.selectedKey : .none
+        let finishAndSendKey: FinishAndSendKey = item.sendAfterPaste ? selectedSendKey() : .none
         SoundManager.shared.playStopSound()
         await actions.dismiss()
-
-        Task {
-            await runCustomCommand(command: command, commandText: commandText, finishAndSendKey: finishAndSendKey)
-        }
+        guard !actions.shouldCancel() else { return }
+        await runCustomCommand(
+            command: command,
+            commandText: commandText,
+            finishAndSendKey: finishAndSendKey,
+            shouldCancel: actions.shouldCancel
+        )
     }
 
-    private func runCustomCommand(command: String, commandText: String, finishAndSendKey: FinishAndSendKey) async {
+    private func runCustomCommand(
+        command: String, commandText: String, finishAndSendKey: FinishAndSendKey,
+        shouldCancel: @MainActor () -> Bool
+    ) async {
+        guard !shouldCancel(), !Task.isCancelled else { return }
         let startTime = Date()
         logger.notice("Custom command started")
 
@@ -140,9 +165,13 @@ final class TranscriptionDelivery {
             if finishAndSendKey.isEnabled {
                 // Let the target app finish pasting before sending.
                 try await Task.sleep(nanoseconds: 150_000_000)
-                CursorPaster.performSendKey(finishAndSendKey)
+                guard !shouldCancel(), !Task.isCancelled else { return }
+                sendKey(finishAndSendKey)
             }
+        } catch is CancellationError {
+            logger.notice("Custom command canceled")
         } catch {
+            guard !shouldCancel() else { return }
             notifyCustomCommandFailure(error, duration: Date().timeIntervalSince(startTime))
         }
     }
@@ -168,21 +197,21 @@ final class TranscriptionDelivery {
         let pastedText = textToPaste + (appendSpace ? " " : "")
         SoundManager.shared.playStopSound()
         await actions.dismiss()
+        guard !actions.shouldCancel() else { return }
 
-        let pasteTask = CursorPaster.startPasteAtCursor(pastedText)
-
-        let selectedKey = FinishAndSendSettings.selectedKey
+        let pasteOutcome = await pasteAtCursor(pastedText, actions.shouldCancel)
+        let selectedKey = selectedSendKey()
         let finishAndSendKey: FinishAndSendKey = sendAfterPaste ? selectedKey : .none
-        Task { @MainActor in
-            let pasteOutcome = await pasteTask.value
-
-            if finishAndSendKey.isEnabled && pasteOutcome.result.didPostPasteCommand {
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                if let generation = pasteOutcome.autoLearnGeneration {
-                    await AutoLearnService.shared.cancelForAutoSend(generation: generation)
-                }
-                CursorPaster.performSendKey(finishAndSendKey)
+        if finishAndSendKey.isEnabled && pasteOutcome.result.didPostPasteCommand {
+            do {
+                try await Task.sleep(nanoseconds: 150_000_000)
+            } catch { return }
+            guard !actions.shouldCancel() else { return }
+            if let generation = pasteOutcome.autoLearnGeneration {
+                await AutoLearnService.shared.cancelForAutoSend(generation: generation)
             }
+            guard !actions.shouldCancel() else { return }
+            sendKey(finishAndSendKey)
         }
     }
 

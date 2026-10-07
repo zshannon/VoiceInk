@@ -48,7 +48,7 @@ class Recorder: NSObject, ObservableObject {
         schedulePrepareForCurrentDevice(reason: "init")
     }
 
-    func startRecording(toOutputFile url: URL) async throws {
+    func startRecording(cancellation: RecordingCancellationState, toOutputFile url: URL) async throws {
         var resolution = deviceManager.resolveCurrentRecordingDevice()
         guard var deviceID = resolution.deviceID else {
             onAudioChunk = nil
@@ -73,8 +73,11 @@ class Recorder: NSObject, ObservableObject {
 
         do {
             do {
-                try await startHardwareRecording(coreAudioRecorder, to: url, deviceID: deviceID)
+                try await cancellation.runStartupAttempt {
+                    try await startHardwareRecording(coreAudioRecorder, to: url, deviceID: deviceID)
+                }
             } catch {
+                guard !cancellation.isCancelled, !Task.isCancelled else { throw CancellationError() }
                 let retryResolution = deviceManager.resolveCurrentRecordingDevice(excluding: deviceID)
                 guard deviceManager.isClamshellClosed,
                     deviceManager.isInternalMicrophone(deviceID),
@@ -86,7 +89,9 @@ class Recorder: NSObject, ObservableObject {
                 deviceID = fallbackDeviceID
                 resolution = retryResolution
                 deviceManager.beginRecordingSetup(deviceID: fallbackDeviceID)
-                try await startHardwareRecording(coreAudioRecorder, to: url, deviceID: fallbackDeviceID)
+                try await cancellation.runStartupAttempt {
+                    try await startHardwareRecording(coreAudioRecorder, to: url, deviceID: fallbackDeviceID)
+                }
             }
 
             deviceManager.recordingDidStart(deviceID: deviceID)
@@ -98,6 +103,7 @@ class Recorder: NSObject, ObservableObject {
                 "Failed to start recording deviceID=\(deviceID, privacy: .public) file=\(url.lastPathComponent, privacy: .public) error=\(error, privacy: .public)"
             )
             await stopRecording()
+            if cancellation.isCancelled || Task.isCancelled { throw CancellationError() }
             throw RecorderError.couldNotStartRecording
         }
     }
