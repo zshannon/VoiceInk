@@ -25,17 +25,19 @@ class TranscriptionPipeline {
     private let modelContext: ModelContext
     private let serviceRegistry: TranscriptionServiceRegistry
     private let enhancementService: AIEnhancementService?
-    private let delivery = TranscriptionDelivery()
+    private let delivery: TranscriptionDelivery
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "TranscriptionPipeline")
 
     init(
         modelContext: ModelContext,
         serviceRegistry: TranscriptionServiceRegistry,
-        enhancementService: AIEnhancementService?
+        enhancementService: AIEnhancementService?,
+        delivery: TranscriptionDelivery? = nil
     ) {
         self.modelContext = modelContext
         self.serviceRegistry = serviceRegistry
         self.enhancementService = enhancementService
+        self.delivery = delivery ?? TranscriptionDelivery()
     }
 
     /// Run the full pipeline for a given transcription record.
@@ -60,7 +62,7 @@ class TranscriptionPipeline {
         outputConfiguration: @escaping () -> OutputRuntimeConfiguration,
         sendAfterPaste: Bool = false,
         onStateChange: @escaping (RecordingState) -> Void,
-        shouldCancel: () -> Bool,
+        shouldCancel: @escaping @MainActor () -> Bool,
         onCancel: @escaping () async -> Void,
         onDismiss: @escaping () async -> Void,
         assistant: AssistantHooks = .inactive
@@ -274,7 +276,7 @@ class TranscriptionPipeline {
             return
         }
 
-        await delivery.deliver(
+        let pasteResult = await delivery.deliver(
             TranscriptionDelivery.Request(
                 transcription: transcription,
                 text: finalText,
@@ -289,9 +291,15 @@ class TranscriptionPipeline {
                 dismiss: onDismiss,
                 sendFollowUp: assistant.sendFollowUp,
                 showResponse: assistant.showResponse,
-                failResponse: assistant.failResponse
+                failResponse: assistant.failResponse,
+                shouldCancel: shouldCancel
             )
         )
+
+        if shouldCancel() && !pasteResult.didPostPasteCommand {
+            await finishCanceledTranscription()
+            return
+        }
 
         saveTranscriptionAndPostCompletion()
     }

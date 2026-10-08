@@ -5,6 +5,7 @@
 //  Created by Prakash Joshi on 15/10/2024.
 //
 
+import Foundation
 import Testing
 @testable import VoiceInk
 

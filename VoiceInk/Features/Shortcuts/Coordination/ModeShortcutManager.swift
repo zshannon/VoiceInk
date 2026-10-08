@@ -2,6 +2,9 @@ import Foundation
 
 @MainActor
 class ModeShortcutManager {
+    var keyboardInputHandler: ((ShortcutMonitor.KeyboardInput) -> Bool)? {
+        didSet { refreshModeShortcuts() }
+    }
     private let shortcutMonitor = ShortcutMonitor()
     private let modeProvider: @MainActor () -> RecordingShortcutManager.Mode
     private let shortcutModeHandler: RecordingShortcutModeHandler
@@ -78,24 +81,32 @@ class ModeShortcutManager {
             interruptibleActions: Set(shortcuts.keys),
             standaloneModifierActions: standaloneModifierActions,
             onShortcutDown: { [weak self] action, eventTime in
+                let generation = MainActor.assumeIsolated {
+                    self?.shortcutModeHandler.registerPendingShortcutDown(action: action)
+                }
                 Task { @MainActor in
-                    guard let self,
-                        let modeId = self.modeId(for: action)
-                    else {
+                    guard let self, let generation else { return }
+                    guard let modeId = self.modeId(for: action) else {
+                        self.shortcutModeHandler.discardPendingShortcutDown(action: action)
                         return
                     }
 
                     await self.shortcutModeHandler.handleShortcutDown(
                         action: action,
                         eventTime: eventTime,
+                        inputGeneration: generation,
                         mode: self.modeProvider(),
                         modeId: modeId
                     )
                 }
             },
             onShortcutUp: { [weak self] action, eventTime in
+                let generation = MainActor.assumeIsolated {
+                    self?.shortcutModeHandler.takeShortcutUpGeneration(action: action)
+                }
                 Task { @MainActor in
                     guard let self,
+                        let generation,
                         case .mode(let modeId) = action
                     else {
                         return
@@ -104,6 +115,7 @@ class ModeShortcutManager {
                     await self.shortcutModeHandler.handleShortcutUp(
                         action: action,
                         eventTime: eventTime,
+                        inputGeneration: generation,
                         mode: self.modeProvider(),
                         modeId: modeId
                     )
@@ -119,7 +131,8 @@ class ModeShortcutManager {
                 MainActor.assumeIsolated {
                     self?.shortcutModeHandler.clearPendingDoubleTap(for: action)
                 }
-            }
+            },
+            onKeyboardInput: keyboardInputHandler
         )
     }
 

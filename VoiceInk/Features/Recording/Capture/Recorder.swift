@@ -19,6 +19,7 @@ class Recorder: NSObject, ObservableObject {
     private var audioMuteTask: Task<Void, Never>?
     private var mediaPauseTask: Task<Void, Never>?
     private var audioRestorationTask: Task<Void, Never>?
+    private var playbackSessionID: UUID?
     private let smoothedValuesLock = NSLock()
     private var smoothedAverage: Float = 0
     private var smoothedPeak: Float = 0
@@ -47,7 +48,7 @@ class Recorder: NSObject, ObservableObject {
         schedulePrepareForCurrentDevice(reason: "init")
     }
 
-    func startRecording(toOutputFile url: URL) async throws {
+    func startRecording(cancellation: RecordingCancellationState, toOutputFile url: URL) async throws {
         var resolution = deviceManager.resolveCurrentRecordingDevice()
         guard var deviceID = resolution.deviceID else {
             onAudioChunk = nil
@@ -58,10 +59,13 @@ class Recorder: NSObject, ObservableObject {
 
         deviceManager.beginRecordingSetup(deviceID: deviceID)
 
+        let playbackSessionID = playbackController.beginRecordingSession()
+        self.playbackSessionID = playbackSessionID
+        mediaController.beginRecordingSession(sessionID: playbackSessionID)
         audioRestorationTask?.cancel()
         audioRestorationTask = nil
-        pauseMedia()
-        muteSystemAudio()
+        pauseMedia(sessionID: playbackSessionID)
+        muteSystemAudio(sessionID: playbackSessionID)
 
         let coreAudioRecorder = recorder ?? CoreAudioRecorder()
         coreAudioRecorder.onAudioChunk = onAudioChunk
@@ -69,8 +73,11 @@ class Recorder: NSObject, ObservableObject {
 
         do {
             do {
-                try await startHardwareRecording(coreAudioRecorder, to: url, deviceID: deviceID)
+                try await cancellation.runStartupAttempt {
+                    try await startHardwareRecording(coreAudioRecorder, to: url, deviceID: deviceID)
+                }
             } catch {
+                guard !cancellation.isCancelled, !Task.isCancelled else { throw CancellationError() }
                 let retryResolution = deviceManager.resolveCurrentRecordingDevice(excluding: deviceID)
                 guard deviceManager.isClamshellClosed,
                     deviceManager.isInternalMicrophone(deviceID),
@@ -82,7 +89,9 @@ class Recorder: NSObject, ObservableObject {
                 deviceID = fallbackDeviceID
                 resolution = retryResolution
                 deviceManager.beginRecordingSetup(deviceID: fallbackDeviceID)
-                try await startHardwareRecording(coreAudioRecorder, to: url, deviceID: fallbackDeviceID)
+                try await cancellation.runStartupAttempt {
+                    try await startHardwareRecording(coreAudioRecorder, to: url, deviceID: fallbackDeviceID)
+                }
             }
 
             deviceManager.recordingDidStart(deviceID: deviceID)
@@ -94,11 +103,13 @@ class Recorder: NSObject, ObservableObject {
                 "Failed to start recording deviceID=\(deviceID, privacy: .public) file=\(url.lastPathComponent, privacy: .public) error=\(error, privacy: .public)"
             )
             await stopRecording()
+            if cancellation.isCancelled || Task.isCancelled { throw CancellationError() }
             throw RecorderError.couldNotStartRecording
         }
     }
 
     func stopRecording() async {
+        let playbackSessionID = self.playbackSessionID
         audioMuteTask?.cancel()
         audioMuteTask = nil
         mediaPauseTask?.cancel()
@@ -112,33 +123,36 @@ class Recorder: NSObject, ObservableObject {
                 continuation.resume()
             }
         }
+        guard self.playbackSessionID == playbackSessionID else { return }
         onAudioChunk = nil
 
         resetAudioMeter()
 
         audioRestorationTask?.cancel()
         audioRestorationTask = Task {
-            await mediaController.unmuteSystemAudio()
-            await playbackController.resumeMedia()
+            if let playbackSessionID {
+                await mediaController.unmuteSystemAudio(sessionID: playbackSessionID)
+                await playbackController.resumeMedia(sessionID: playbackSessionID)
+            }
         }
         deviceManager.recordingDidStop()
     }
 
-    private func muteSystemAudio() {
+    private func muteSystemAudio(sessionID: UUID) {
         audioMuteTask?.cancel()
         audioMuteTask = Task { [weak self] in
             guard let self else { return }
             try? await Task.sleep(nanoseconds: self.recordingAudioActionDelayNanoseconds)
             guard !Task.isCancelled else { return }
-            _ = await self.mediaController.muteSystemAudio()
+            _ = self.mediaController.muteSystemAudio(sessionID: sessionID)
         }
     }
 
-    private func pauseMedia() {
+    private func pauseMedia(sessionID: UUID) {
         mediaPauseTask?.cancel()
         mediaPauseTask = Task { [weak self] in
             guard let self else { return }
-            await self.playbackController.pauseMedia()
+            await self.playbackController.pauseMedia(sessionID: sessionID)
         }
     }
 

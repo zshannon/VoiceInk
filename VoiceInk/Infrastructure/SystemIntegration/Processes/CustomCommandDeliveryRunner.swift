@@ -65,15 +65,22 @@ enum CustomCommandDeliveryRunner {
             throw CustomCommandDeliveryError.commandNotConfigured
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                execute(
-                    command: trimmedCommand,
-                    timeout: timeout,
-                    context: context,
-                    continuation: continuation
-                )
+        let cancellation = CustomCommandCancellation()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    execute(
+                        command: trimmedCommand,
+                        timeout: timeout,
+                        context: context,
+                        continuation: continuation,
+                        cancellation: cancellation
+                    )
+                }
             }
+        } onCancel: {
+            cancellation.cancel()
         }
     }
 
@@ -81,7 +88,8 @@ enum CustomCommandDeliveryRunner {
         command: String,
         timeout: TimeInterval,
         context: CustomCommandDeliveryContext,
-        continuation: CheckedContinuation<CustomCommandDeliveryResult, Error>
+        continuation: CheckedContinuation<CustomCommandDeliveryResult, Error>,
+        cancellation: CustomCommandCancellation
     ) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -102,15 +110,15 @@ enum CustomCommandDeliveryRunner {
         let outputCollectors = [outputCollector, errorCollector]
         let inputWriteGroup = DispatchGroup()
 
-        let semaphore = DispatchSemaphore(value: 0)
+        let semaphore = cancellation.semaphore
         process.terminationHandler = { _ in semaphore.signal() }
 
         do {
-            try process.run()
+            try cancellation.launch(process)
         } catch {
             try? inputPipe.fileHandleForWriting.close()
             outputCollectors.forEach { $0.stop() }
-            continuation.resume(throwing: CustomCommandDeliveryError.launchFailed(error.localizedDescription))
+            continuation.resume(throwing: cancellation.isCancelled ? CancellationError() : CustomCommandDeliveryError.launchFailed(error.localizedDescription))
             return
         }
 
@@ -118,6 +126,15 @@ enum CustomCommandDeliveryRunner {
         startWritingStandardInput(context.standardInput, to: inputPipe.fileHandleForWriting, group: inputWriteGroup)
 
         let waitResult = semaphore.wait(timeout: timeoutDeadline)
+        if cancellation.isCancelled {
+            terminate(process, semaphore: semaphore)
+            try? inputPipe.fileHandleForWriting.close()
+            _ = waitForCollectors(outputCollectors, timeout: 1)
+            outputCollectors.forEach { $0.stop() }
+            _ = waitForGroup(inputWriteGroup, timeout: 1)
+            continuation.resume(throwing: CancellationError())
+            return
+        }
         if waitResult == .timedOut {
             terminate(process, semaphore: semaphore)
             try? inputPipe.fileHandleForWriting.close()
@@ -134,6 +151,11 @@ enum CustomCommandDeliveryRunner {
 
         let stdout = outputCollector.stringValue()
         let stderr = errorCollector.stringValue()
+
+        guard !cancellation.isCancelled else {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
 
         guard process.terminationStatus == 0 else {
             continuation.resume(
@@ -274,6 +296,29 @@ enum CustomCommandDeliveryRunner {
     private static func waitForCollectors(_ collectors: [PipeOutputCollector], timeout: TimeInterval) -> Bool {
         let deadline = DispatchTime.now() + timeout
         return collectors.allSatisfy { $0.wait(until: deadline) }
+    }
+}
+
+private final class CustomCommandCancellation: @unchecked Sendable {
+    let semaphore = DispatchSemaphore(value: 0)
+    private let state = OSAllocatedUnfairLock(initialState: false)
+
+    var isCancelled: Bool { state.withLock { $0 } }
+
+    func cancel() {
+        let didCancel = state.withLock { isCancelled in
+            guard !isCancelled else { return false }
+            isCancelled = true
+            return true
+        }
+        if didCancel { semaphore.signal() }
+    }
+
+    func launch(_ process: Process) throws {
+        try state.withLock { isCancelled in
+            guard !isCancelled else { throw CancellationError() }
+            try process.run()
+        }
     }
 }
 

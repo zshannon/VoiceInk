@@ -5,6 +5,9 @@ import Foundation
 
 @MainActor
 final class RecorderPanelShortcutManager: ObservableObject {
+    var keyboardInputHandler: ((ShortcutMonitor.KeyboardInput) -> Bool)? {
+        didSet { refreshVisibleShortcuts() }
+    }
     private var recorderUIManager: RecorderUIManager
     private var visibilityTask: Task<Void, Never>?
     private var shortcutChangeObserver: NSObjectProtocol?
@@ -131,7 +134,8 @@ final class RecorderPanelShortcutManager: ObservableObject {
                     await self?.handleRecorderPanelShortcut(action)
                 }
             },
-            onShortcutUp: { _, _ in }
+            onShortcutUp: { _, _ in },
+            onKeyboardInput: keyboardInputHandler
         )
     }
 

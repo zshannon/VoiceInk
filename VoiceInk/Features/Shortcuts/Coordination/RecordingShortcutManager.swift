@@ -42,6 +42,7 @@ class RecordingShortcutManager: ObservableObject {
     private var shortcutChangeObserver: NSObjectProtocol?
     private let shortcutModeHandler: RecordingShortcutModeHandler
     private let primaryRecordingShortcutModeSource: RecordingShortcutModeSource
+    private var keyboardCancellationPolicy = RecordingKeyboardCancellationPolicy()
 
     enum Mode: String, CaseIterable {
         case toggle = "toggle"
@@ -97,7 +98,7 @@ class RecordingShortcutManager: ObservableObject {
 
         let shortcutModeHandler = RecordingShortcutModeHandler(
             canHandleShortcutAction: {
-                Self.canHandleShortcutAction(for: engine.recordingState)
+                Self.canHandleShortcutAction(for: engine.recordingState) && !engine.isRecordingTransitionBlocked
             },
             isRecorderVisible: {
                 recorderUIManager.isRecorderPanelVisible
@@ -119,7 +120,6 @@ class RecordingShortcutManager: ObservableObject {
 
         self.engine = engine
         self.recorderUIManager = recorderUIManager
-        self.recorderPanelShortcutManager = RecorderPanelShortcutManager(recorderUIManager: recorderUIManager)
         self.shortcutModeHandler = shortcutModeHandler
         self.primaryRecordingShortcutModeSource = primaryRecordingShortcutModeSource
         self.modeShortcutManager = ModeShortcutManager(
@@ -128,6 +128,12 @@ class RecordingShortcutManager: ObservableObject {
             },
             shortcutModeHandler: shortcutModeHandler
         )
+        self.recorderPanelShortcutManager = RecorderPanelShortcutManager(recorderUIManager: recorderUIManager)
+        let keyboardInputHandler: (ShortcutMonitor.KeyboardInput) -> Bool = { [weak self] input in
+            MainActor.assumeIsolated { self?.handleKeyboardInput(input) ?? false }
+        }
+        self.modeShortcutManager.keyboardInputHandler = keyboardInputHandler
+        self.recorderPanelShortcutManager.keyboardInputHandler = keyboardInputHandler
 
         shortcutChangeObserver = NotificationCenter.default.addObserver(
             forName: ShortcutStore.shortcutDidChange,
@@ -173,23 +179,33 @@ class RecordingShortcutManager: ObservableObject {
             interruptibleActions: interruptibleRecordingActions,
             standaloneModifierActions: standaloneModifierActions,
             onShortcutDown: { [weak self] action, eventTime in
+                let generation = MainActor.assumeIsolated { () -> UInt64? in
+                    guard let self, self.recordingMode(for: action) != nil else { return nil }
+                    return self.shortcutModeHandler.registerPendingShortcutDown(action: action)
+                }
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self, let generation else { return }
                     guard let mode = self.recordingMode(for: action) else { return }
                     await self.shortcutModeHandler.handleShortcutDown(
                         action: action,
                         eventTime: eventTime,
+                        inputGeneration: generation,
                         mode: mode
                     )
                 }
             },
             onShortcutUp: { [weak self] action, eventTime in
+                let generation = MainActor.assumeIsolated {
+                    self?.shortcutModeHandler.takeShortcutUpGeneration(action: action)
+                }
                 Task { @MainActor in
                     guard let self else { return }
                     if let mode = self.recordingMode(for: action) {
+                        guard let generation else { return }
                         await self.shortcutModeHandler.handleShortcutUp(
                             action: action,
                             eventTime: eventTime,
+                            inputGeneration: generation,
                             mode: mode
                         )
                     } else {
@@ -207,8 +223,42 @@ class RecordingShortcutManager: ObservableObject {
                 MainActor.assumeIsolated {
                     self?.shortcutModeHandler.clearPendingDoubleTap(for: action)
                 }
+            },
+            onKeyboardInput: { [weak self] input in
+                MainActor.assumeIsolated { self?.handleKeyboardInput(input) ?? false }
             }
         )
+    }
+
+    private func handleKeyboardInput(_ input: ShortcutMonitor.KeyboardInput) -> Bool {
+        var invocationShortcuts: [Shortcut] = []
+        if primaryRecordingShortcut == .custom, let shortcut = ShortcutStore.shortcut(for: .primaryRecording) {
+            invocationShortcuts.append(shortcut)
+        }
+        if secondaryRecordingShortcut == .custom, let shortcut = ShortcutStore.shortcut(for: .secondaryRecording) {
+            invocationShortcuts.append(shortcut)
+        }
+        for mode in ModeManager.shared.enabledConfigurations {
+            if let shortcut = ShortcutStore.shortcut(for: .mode(mode.id)) { invocationShortcuts.append(shortcut) }
+        }
+
+        let shouldCancel = keyboardCancellationPolicy.shouldCancel(
+            input: input,
+            invocationShortcuts: invocationShortcuts,
+            isActive: recorderUIManager.isRecorderPanelVisible || engine.recordingState != .idle
+                || shortcutModeHandler.hasPendingInvocation || !input.pressedShortcutActions.isEmpty
+        )
+        guard shouldCancel else { return false }
+        shortcutModeHandler.invalidateForKeyboardCancellation()
+        // Idle candidates only need input invalidation, not recorder cleanup.
+        guard recorderUIManager.isRecorderPanelVisible || engine.recordingState != .idle else { return true }
+        guard !engine.shouldCancelRecording else { return true }
+
+        engine.requestRecordingCancellation()
+        Task { @MainActor [weak self] in
+            await self?.recorderUIManager.cancelRecording()
+        }
+        return true
     }
 
     private var standaloneModifierActions: Set<ShortcutAction> {
@@ -315,6 +365,9 @@ final class RecordingShortcutModeHandler {
     private var activeShortcutIsDoubleTap = false
     private var lastShortcutPressTime: Date?
     private var pendingDoubleTapReleaseTimes: [ShortcutAction: TimeInterval] = [:]
+    private var keyboardInputGeneration: UInt64 = 0
+    private var pendingShortcutActions = Set<ShortcutAction>()
+    private var shortcutInputGenerations: [ShortcutAction: UInt64] = [:]
 
     private let shortcutPressCooldown: TimeInterval = 0.5
     private let hybridPressThreshold: TimeInterval = 0.5
@@ -335,6 +388,8 @@ final class RecordingShortcutModeHandler {
     }
 
     func reset() {
+        keyboardInputGeneration &+= 1
+        pendingShortcutActions.removeAll()
         isShortcutPressed = false
         shortcutPressStartTime = nil
         isHandsFreeRecording = false
@@ -373,9 +428,12 @@ final class RecordingShortcutModeHandler {
     func handleShortcutDown(
         action: ShortcutAction,
         eventTime: TimeInterval,
+        inputGeneration: UInt64? = nil,
         mode: RecordingShortcutManager.Mode,
         modeId: UUID? = nil
     ) async {
+        if let inputGeneration, inputGeneration != keyboardInputGeneration { return }
+        pendingShortcutActions.remove(action)
         if interruptedRecordingActions.remove(action) != nil {
             return
         }
@@ -431,9 +489,11 @@ final class RecordingShortcutModeHandler {
     func handleShortcutUp(
         action: ShortcutAction,
         eventTime: TimeInterval,
+        inputGeneration: UInt64? = nil,
         mode: RecordingShortcutManager.Mode,
         modeId: UUID? = nil
     ) async {
+        if let inputGeneration, inputGeneration != keyboardInputGeneration { return }
         guard isShortcutPressed, activeRecordingShortcutAction == action else { return }
         isShortcutPressed = false
         activeRecordingShortcutAction = nil
@@ -482,6 +542,11 @@ final class RecordingShortcutModeHandler {
     }
 
     func handleInterruption(action: ShortcutAction) async {
+        if isRecorderVisible() || recordingState() != .idle {
+            invalidateForKeyboardCancellation()
+            await cancelRecording()
+            return
+        }
         guard isShortcutPressed, activeRecordingShortcutAction == action else {
             if canCurrentShortcutPressCancelAccidentalStart {
                 interruptedRecordingActions.insert(action)
@@ -503,6 +568,33 @@ final class RecordingShortcutModeHandler {
 
         reset()
         await cancelRecording()
+    }
+
+    func invalidateForKeyboardCancellation() {
+        reset()
+        lastShortcutPressTime = nil
+    }
+
+    var hasPendingInvocation: Bool {
+        if isShortcutPressed || !pendingShortcutActions.isEmpty { return true }
+        let now = ProcessInfo.processInfo.systemUptime
+        return pendingDoubleTapReleaseTimes.values.contains {
+            now >= $0 && now - $0 <= doubleTapThreshold
+        }
+    }
+
+    func registerPendingShortcutDown(action: ShortcutAction) -> UInt64 {
+        pendingShortcutActions.insert(action)
+        shortcutInputGenerations[action] = keyboardInputGeneration
+        return keyboardInputGeneration
+    }
+
+    func takeShortcutUpGeneration(action: ShortcutAction) -> UInt64? {
+        shortcutInputGenerations.removeValue(forKey: action)
+    }
+
+    func discardPendingShortcutDown(action: ShortcutAction) {
+        pendingShortcutActions.remove(action)
     }
 
     private var canCurrentShortcutPressCancelAccidentalStart: Bool {

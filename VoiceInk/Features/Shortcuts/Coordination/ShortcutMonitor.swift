@@ -1,16 +1,47 @@
 import AppKit
+import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
+import IOKit.hidsystem
 import os
 
 final class ShortcutMonitor {
-    fileprivate enum EventKind {
+    enum EventKind {
         case keyDown
         case keyUp
         case flagsChanged
         case mouseDown
         case mouseDragged
         case mouseUp
+    }
+
+    struct KeyboardInput {
+        let inputCode: UInt16
+        let isRepeat: Bool
+        let kind: EventKind
+        let modifierFlags: NSEvent.ModifierFlags
+        let pressedShortcutActions: Set<ShortcutAction>
+
+        var isKeyPress: Bool {
+            if kind == .keyDown { return true }
+            guard kind == .flagsChanged else { return false }
+            if inputCode == UInt16(kVK_CapsLock) { return true }
+            guard let mask = Self.modifierKeyMasks[inputCode] else { return false }
+            return modifierFlags.rawValue & mask != 0
+        }
+
+        // Device-specific masks distinguish opposite-side modifier releases.
+        private static let modifierKeyMasks: [UInt16: UInt] = [
+            UInt16(kVK_Command): UInt(NX_DEVICELCMDKEYMASK),
+            UInt16(kVK_Control): UInt(NX_DEVICELCTLKEYMASK),
+            UInt16(kVK_Function): UInt(NX_SECONDARYFNMASK),
+            UInt16(kVK_Option): UInt(NX_DEVICELALTKEYMASK),
+            UInt16(kVK_RightCommand): UInt(NX_DEVICERCMDKEYMASK),
+            UInt16(kVK_RightControl): UInt(NX_DEVICERCTLKEYMASK),
+            UInt16(kVK_RightOption): UInt(NX_DEVICERALTKEYMASK),
+            UInt16(kVK_RightShift): UInt(NX_DEVICERSHIFTKEYMASK),
+            UInt16(kVK_Shift): UInt(NX_DEVICELSHIFTKEYMASK),
+        ]
     }
 
     private struct ShortcutState {
@@ -26,6 +57,7 @@ final class ShortcutMonitor {
     private var suppressedMouseButtons = Set<UInt16>()
     private var interruptibleActions: Set<ShortcutAction> = []
     private var standaloneModifierActions: Set<ShortcutAction> = []
+    private var onKeyboardInput: ((KeyboardInput) -> Bool)?
     private var onShortcutDown: ((ShortcutAction, TimeInterval) -> Void)?
     private var onShortcutUp: ((ShortcutAction, TimeInterval) -> Void)?
     private var onShortcutInterrupted: ((ShortcutAction, TimeInterval) -> Void)?
@@ -48,16 +80,37 @@ final class ShortcutMonitor {
         onShortcutDown: @escaping (ShortcutAction, TimeInterval) -> Void,
         onShortcutUp: @escaping (ShortcutAction, TimeInterval) -> Void,
         onShortcutInterrupted: ((ShortcutAction, TimeInterval) -> Void)? = nil,
-        onStandaloneModifierChord: ((ShortcutAction) -> Void)? = nil
+        onStandaloneModifierChord: ((ShortcutAction) -> Void)? = nil,
+        onKeyboardInput: ((KeyboardInput) -> Bool)? = nil
     ) -> Bool {
+        configure(
+            shortcuts: shortcuts,
+            interruptibleActions: interruptibleActions,
+            standaloneModifierActions: standaloneModifierActions,
+            onShortcutDown: onShortcutDown,
+            onShortcutUp: onShortcutUp,
+            onShortcutInterrupted: onShortcutInterrupted,
+            onStandaloneModifierChord: onStandaloneModifierChord,
+            onKeyboardInput: onKeyboardInput
+        )
+        guard !self.shortcuts.isEmpty || onKeyboardInput != nil else { return true }
+        return installEventTap()
+    }
+
+    func configure(
+        shortcuts: [ShortcutAction: Shortcut],
+        interruptibleActions: Set<ShortcutAction> = [],
+        standaloneModifierActions: Set<ShortcutAction> = [],
+        onShortcutDown: @escaping (ShortcutAction, TimeInterval) -> Void,
+        onShortcutUp: @escaping (ShortcutAction, TimeInterval) -> Void,
+        onShortcutInterrupted: ((ShortcutAction, TimeInterval) -> Void)? = nil,
+        onStandaloneModifierChord: ((ShortcutAction) -> Void)? = nil,
+        onKeyboardInput: ((KeyboardInput) -> Bool)? = nil
+    ) {
         stop()
 
         for (action, shortcut) in shortcuts {
             self.shortcuts[action] = ShortcutState(shortcut: shortcut)
-        }
-
-        guard !self.shortcuts.isEmpty else {
-            return true
         }
 
         self.interruptibleActions = interruptibleActions
@@ -66,8 +119,7 @@ final class ShortcutMonitor {
         self.onShortcutUp = onShortcutUp
         self.onShortcutInterrupted = onShortcutInterrupted
         self.onStandaloneModifierChord = onStandaloneModifierChord
-
-        return installEventTap()
+        self.onKeyboardInput = onKeyboardInput
     }
 
     func updateStandaloneModifierActions(_ actions: Set<ShortcutAction>) {
@@ -94,6 +146,7 @@ final class ShortcutMonitor {
         onShortcutUp = nil
         onShortcutInterrupted = nil
         onStandaloneModifierChord = nil
+        onKeyboardInput = nil
     }
 
     private func installEventTap() -> Bool {
@@ -143,7 +196,18 @@ final class ShortcutMonitor {
         return true
     }
 
-    private func handleCGEvent(type: CGEventType, event: CGEvent) -> Bool {
+    func handleCGEvent(type: CGEventType, event: CGEvent) -> Bool {
+        if event.getIntegerValueField(.eventSourceUserData) == CursorPaster.syntheticEventMarker {
+            return false
+        }
+        let isAppleScriptPasteEvent = MainActor.assumeIsolated {
+            guard CursorPaster.isExecutingAppleScriptPaste,
+                let processID = pid_t(exactly: event.getIntegerValueField(.eventSourceUnixProcessID)),
+                processID != 0
+            else { return false }
+            return NSRunningApplication(processIdentifier: processID)?.bundleIdentifier == "com.apple.systemevents"
+        }
+        if isAppleScriptPasteEvent { return false }
         guard UserSessionInputPolicy.allowsShortcutHandling else {
             clearPressedShortcutState()
             return false
@@ -166,7 +230,8 @@ final class ShortcutMonitor {
             kind: eventKind,
             inputCode: inputCode,
             modifierFlags: modifierFlags,
-            eventTime: ProcessInfo.processInfo.systemUptime
+            eventTime: ProcessInfo.processInfo.systemUptime,
+            isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
         )
     }
 
@@ -195,12 +260,32 @@ final class ShortcutMonitor {
         pressedKeyCodes.removeAll()
     }
 
-    private func handleEvent(
+    func handleEvent(
         kind: EventKind,
         inputCode: UInt16,
         modifierFlags: NSEvent.ModifierFlags,
-        eventTime: TimeInterval
+        eventTime: TimeInterval,
+        isRepeat: Bool = false
     ) -> Bool {
+        let pressedRecordingActions = Set(shortcuts.compactMap { action, state in
+            state.isDown && !state.requiresStandaloneRelease && interruptibleActions.contains(action) ? action : nil
+        })
+        let input = KeyboardInput(
+            inputCode: inputCode,
+            isRepeat: isRepeat,
+            kind: kind,
+            modifierFlags: modifierFlags,
+            pressedShortcutActions: pressedRecordingActions
+        )
+        // All existing taps share this gate. Run it before any tap can consume
+        // Escape, Return, or another shortcut, and preserve the user's input.
+        if onKeyboardInput?(input) == true {
+            updatePressedKeyCodes(kind: kind, inputCode: inputCode)
+            invalidateStandaloneModifierCandidateForKeyboardEvent(
+                kind: kind, inputCode: inputCode, modifierFlags: modifierFlags
+            )
+            return false
+        }
         var shouldSuppress: Bool
         switch kind {
         case .mouseDragged:
@@ -462,6 +547,10 @@ final class ShortcutMonitor {
             onStandaloneModifierChord?(action)
         }
 
+        // The shared input gate owns cancellation when installed. Exempt
+        // invocation keys must not be canceled by the old one-second heuristic.
+        guard onKeyboardInput == nil else { return }
+
         for action in interruptibleActions {
             guard var state = shortcuts[action],
                 state.isDown,
@@ -480,15 +569,13 @@ final class ShortcutMonitor {
     }
 
     private func dispatchShortcutDown(for action: ShortcutAction, eventTime: TimeInterval) {
-        DispatchQueue.main.async { [onShortcutDown] in
-            onShortcutDown?(action, eventTime)
-        }
+        // Arm pending invocation ownership before later physical input arrives.
+        // Clients still run the recording workflow in a MainActor task.
+        onShortcutDown?(action, eventTime)
     }
 
     private func dispatchShortcutUp(for action: ShortcutAction, eventTime: TimeInterval) {
-        DispatchQueue.main.async { [onShortcutUp] in
-            onShortcutUp?(action, eventTime)
-        }
+        onShortcutUp?(action, eventTime)
     }
 
     private func dispatchShortcutInterrupted(for action: ShortcutAction, eventTime: TimeInterval) {
