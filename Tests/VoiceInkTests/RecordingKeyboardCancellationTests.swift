@@ -6,6 +6,113 @@ import Testing
 
 @Suite @MainActor
 struct RecordingKeyboardCancellationTests {
+    @Test(arguments: [kVK_F1, kVK_F6, kVK_F20])
+    func fnPrefixForFunctionKeyInvocationDoesNotCancelActiveRecording(keyCode: Int) {
+        var policy = RecordingKeyboardCancellationPolicy()
+        let trigger = Shortcut.key(keyCode: UInt16(keyCode), modifierFlags: [.command, .function])
+        #expect(!trigger.modifierFlags.contains(.function))
+        let fnCancels = policy.shouldCancel(input: input(UInt16(kVK_Function), kind: .flagsChanged, flags: [.function]), invocationShortcuts: [trigger], isActive: true)
+        #expect(!fnCancels)
+        let chordCancels = policy.shouldCancel(input: input(UInt16(keyCode), flags: [.command, .function]), invocationShortcuts: [trigger], isActive: true)
+        #expect(!chordCancels)
+        let extraModifierCancels = policy.shouldCancel(input: input(UInt16(kVK_Shift), kind: .flagsChanged, flags: NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.function.rawValue | NSEvent.ModifierFlags.shift.rawValue | 0x2)), invocationShortcuts: [trigger], isActive: true)
+        #expect(extraModifierCancels)
+        let unrelatedFnCancels = policy.shouldCancel(input: input(UInt16(kVK_Function), kind: .flagsChanged, flags: [.function]), invocationShortcuts: [.rightCommand], isActive: true)
+        #expect(unrelatedFnCancels)
+    }
+
+    @Test
+    func typingBetweenReleasedDoubleTapsPreventsAccidentalRecording() async {
+        let session = ShortcutSession()
+        var policy = RecordingKeyboardCancellationPolicy()
+        let trigger = Shortcut.key(keyCode: UInt16(kVK_ANSI_R), modifierFlags: [.command])
+        let time = ProcessInfo.processInfo.systemUptime
+        await session.handler.handleShortcutDown(action: .primaryRecording, eventTime: time - 0.15, mode: .doubleTap)
+        await session.handler.handleShortcutUp(action: .primaryRecording, eventTime: time - 0.1, mode: .doubleTap)
+        #expect(session.toggles == 0)
+        #expect(session.handler.hasPendingInvocation)
+
+        let typingCancels = policy.shouldCancel(input: input(UInt16(kVK_ANSI_A)), invocationShortcuts: [trigger], isActive: session.handler.hasPendingInvocation)
+        if typingCancels { session.handler.invalidateForKeyboardCancellation() }
+        #expect(typingCancels)
+        await session.handler.handleShortcutDown(action: .primaryRecording, eventTime: time + 0.1, mode: .doubleTap)
+        await session.handler.handleShortcutUp(action: .primaryRecording, eventTime: time + 0.15, mode: .doubleTap)
+        #expect(session.toggles == 0)
+        #expect(!session.isVisible)
+
+        await session.handler.handleShortcutDown(action: .primaryRecording, eventTime: time + 0.3, mode: .doubleTap)
+        await session.handler.handleShortcutUp(action: .primaryRecording, eventTime: time + 0.35, mode: .doubleTap)
+        #expect(session.toggles == 1)
+        #expect(session.isVisible)
+    }
+
+    @Test
+    func typingBeforeQueuedDoubleTapReleaseInvalidatesTheCandidate() async {
+        let session = ShortcutSession()
+        var policy = RecordingKeyboardCancellationPolicy()
+        let downSignals = [TestSignal(), TestSignal()]
+        var downCount = 0
+        let upSignals = [TestSignal(), TestSignal()]
+        var upCount = 0
+        var cancellations = 0
+        let monitor = ShortcutMonitor()
+        let trigger = Shortcut.key(keyCode: UInt16(kVK_ANSI_R), modifierFlags: [.command])
+        monitor.configure(
+            shortcuts: [.primaryRecording: trigger],
+            interruptibleActions: [.primaryRecording],
+            onShortcutDown: { action, time in
+                let generation = session.handler.registerPendingShortcutDown(action: action)
+                let signal = downSignals[downCount]
+                downCount += 1
+                Task { @MainActor in
+                    await session.handler.handleShortcutDown(action: action, eventTime: time, inputGeneration: generation, mode: .doubleTap)
+                    signal.finish()
+                }
+            },
+            onShortcutUp: { action, time in
+                let generation = session.handler.takeShortcutUpGeneration(action: action)
+                let signal = upSignals[upCount]
+                upCount += 1
+                Task { @MainActor in
+                    await session.handler.handleShortcutUp(action: action, eventTime: time, inputGeneration: generation, mode: .doubleTap)
+                    signal.finish()
+                }
+            },
+            onKeyboardInput: { input in
+                if policy.shouldCancel(input: input, invocationShortcuts: [trigger], isActive: session.handler.hasPendingInvocation || !input.pressedShortcutActions.isEmpty) {
+                    cancellations += 1
+                    session.handler.invalidateForKeyboardCancellation()
+                    return true
+                }
+                return false
+            }
+        )
+        let time = ProcessInfo.processInfo.systemUptime
+        _ = monitor.handleEvent(kind: .keyDown, inputCode: UInt16(kVK_ANSI_R), modifierFlags: [.command], eventTime: time - 0.1)
+        await downSignals[0].wait()
+        _ = monitor.handleEvent(kind: .keyUp, inputCode: UInt16(kVK_ANSI_R), modifierFlags: [.command], eventTime: time)
+        #expect(!monitor.handleEvent(kind: .keyDown, inputCode: UInt16(kVK_ANSI_A), modifierFlags: [], eventTime: time + 0.01))
+        _ = monitor.handleEvent(kind: .keyUp, inputCode: UInt16(kVK_ANSI_A), modifierFlags: [], eventTime: time + 0.02)
+        await upSignals[0].wait()
+        #expect(cancellations == 1)
+        _ = monitor.handleEvent(kind: .keyDown, inputCode: UInt16(kVK_ANSI_R), modifierFlags: [.command], eventTime: time + 0.1)
+        await downSignals[1].wait()
+        _ = monitor.handleEvent(kind: .keyUp, inputCode: UInt16(kVK_ANSI_R), modifierFlags: [.command], eventTime: time + 0.15)
+        await upSignals[1].wait()
+        #expect(session.toggles == 0)
+        #expect(!session.isVisible)
+    }
+
+    @Test
+    func expiredDoubleTapCandidateDoesNotKeepIdleInputActive() async {
+        let session = ShortcutSession()
+        let time = ProcessInfo.processInfo.systemUptime
+        await session.handler.handleShortcutDown(action: .primaryRecording, eventTime: time - 1.1, mode: .doubleTap)
+        await session.handler.handleShortcutUp(action: .primaryRecording, eventTime: time - 1, mode: .doubleTap)
+        #expect(!session.handler.hasPendingInvocation)
+        #expect(session.toggles == 0)
+    }
+
     @Test
     func typingAfterTriggerReleaseCancelsHandsFreeRecording() async {
         let session = ShortcutSession()

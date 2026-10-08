@@ -40,34 +40,36 @@ final class TranscriptionDelivery {
         let shouldCancel: @MainActor () -> Bool
     }
 
-    func deliver(_ request: Request, actions: Actions) async {
-        guard !actions.shouldCancel() else { return }
+    @discardableResult
+    func deliver(_ request: Request, actions: Actions) async -> CursorPaster.PasteResult {
+        guard !actions.shouldCancel() else { return .commandNotPosted }
         guard request.transcription.transcriptionStatus == TranscriptionStatus.completed.rawValue else {
             await actions.dismiss()
-            return
+            return .commandNotPosted
         }
 
         if request.isAssistantFollowUp {
             await deliverFollowUp(request, actions: actions)
-            return
+            return .commandNotPosted
         }
 
         if request.output.outputMode == .respond,
             request.responseConfig != nil || request.responseError != nil
         {
             await deliverResponse(request, actions: actions)
-            return
+            return .commandNotPosted
         }
 
         if request.output.outputMode == .customCommand {
             await deliverCustomCommand(request, actions: actions)
-            return
+            return .commandNotPosted
         }
 
         if let text = request.text {
-            await paste(text, sendAfterPaste: request.sendAfterPaste, actions: actions)
+            return await paste(text, sendAfterPaste: request.sendAfterPaste, actions: actions)
         } else {
             await actions.dismiss()
+            return .commandNotPosted
         }
     }
 
@@ -191,13 +193,13 @@ final class TranscriptionDelivery {
         String(format: "%.3f", duration)
     }
 
-    private func paste(_ text: String, sendAfterPaste: Bool, actions: Actions) async {
+    private func paste(_ text: String, sendAfterPaste: Bool, actions: Actions) async -> CursorPaster.PasteResult {
         let textToPaste = deliverableText(from: text)
         let appendSpace = UserDefaults.standard.bool(forKey: "AppendTrailingSpace")
         let pastedText = textToPaste + (appendSpace ? " " : "")
         SoundManager.shared.playStopSound()
         await actions.dismiss()
-        guard !actions.shouldCancel() else { return }
+        guard !actions.shouldCancel() else { return .commandNotPosted }
 
         let pasteOutcome = await pasteAtCursor(pastedText, actions.shouldCancel)
         let selectedKey = selectedSendKey()
@@ -205,14 +207,15 @@ final class TranscriptionDelivery {
         if finishAndSendKey.isEnabled && pasteOutcome.result.didPostPasteCommand {
             do {
                 try await Task.sleep(nanoseconds: 150_000_000)
-            } catch { return }
-            guard !actions.shouldCancel() else { return }
+            } catch { return pasteOutcome.result }
+            guard !actions.shouldCancel() else { return pasteOutcome.result }
             if let generation = pasteOutcome.autoLearnGeneration {
                 await AutoLearnService.shared.cancelForAutoSend(generation: generation)
             }
-            guard !actions.shouldCancel() else { return }
+            guard !actions.shouldCancel() else { return pasteOutcome.result }
             sendKey(finishAndSendKey)
         }
+        return pasteOutcome.result
     }
 
     private func deliverableText(from text: String) -> String {

@@ -6,6 +6,29 @@ import Testing
 
 @Suite(.serialized) @MainActor
 struct RecordingDeliveryCancellationTests {
+    @Test(arguments: [false, true])
+    func cancellationAfterCommittedPastePreservesHistoryAndSuppressesSend(cancelTask: Bool) async throws {
+        let fixture = try PipelineFixture()
+        let cancellation = RecordingCancellationState()
+        let record = fixture.record()
+        let pasted = TestSignal()
+        fixture.onPaste = { pasted.finish() }
+        let session = ControlledTranscriptionSession()
+        let run = Task { await fixture.run(record, cancellation: cancellation, sendAfterPaste: true, session: session) }
+        await session.started.wait()
+        session.finish("already pasted transcript")
+        await pasted.wait()
+        cancellation.cancel()
+        if cancelTask { run.cancel() }
+        await run.value
+
+        #expect(fixture.deliveredTexts == ["already pasted transcript"])
+        #expect(record.text == "already pasted transcript")
+        #expect(record.transcriptionStatus == TranscriptionStatus.completed.rawValue)
+        #expect(fixture.sentKeys.isEmpty)
+        #expect(cancellation.isCancelled)
+    }
+
     @Test
     func lateProviderResultAfterCancelCannotInsertOrDismissANewSession() async throws {
         let fixture = try PipelineFixture()
@@ -195,7 +218,9 @@ private final class PipelineFixture {
     private let mode = ModeConfig(name: "Cancellation test", isAIEnhancementEnabled: false)
     private let model = NativeAppleModel(name: "test", displayName: "Test", description: "Test", isMultilingualModel: false, supportedLanguages: ["en": "English"])
     var onDismiss: () -> Void = {}
+    var onPaste: () -> Void = {}
     private let provider = EmptyWhisperModelProvider()
+    var sentKeys: [FinishAndSendKey] = []
 
     init() throws {
         container = try ModelContainer(
@@ -211,12 +236,13 @@ private final class PipelineFixture {
         return record
     }
 
-    func run(_ record: Transcription, cancellation: RecordingCancellationState, session: TranscriptionSession) async {
+    func run(_ record: Transcription, cancellation: RecordingCancellationState, sendAfterPaste: Bool = false, session: TranscriptionSession) async {
         let registry = TranscriptionServiceRegistry(modelProvider: provider, modelsDirectory: FileManager.default.temporaryDirectory, modelContext: context)
         let delivery = TranscriptionDelivery(pasteAtCursor: { [self] text, shouldCancel in
             if !shouldCancel() { deliveredTexts.append(text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            onPaste()
             return .init(result: .commandPosted, autoLearnGeneration: nil)
-        })
+        }, selectedSendKey: { .enter }, sendKey: { [self] in sentKeys.append($0) })
         let pipeline = TranscriptionPipeline(modelContext: context, serviceRegistry: registry, enhancementService: nil, delivery: delivery)
         await pipeline.run(
             transcription: record,
@@ -226,6 +252,7 @@ private final class PipelineFixture {
             session: session,
             enhancementConfiguration: { nil },
             outputConfiguration: { .init(mode: nil, outputMode: .paste, customCommand: nil) },
+            sendAfterPaste: sendAfterPaste,
             onStateChange: { _ in },
             shouldCancel: { cancellation.isCancelled },
             onCancel: { session.cancel() },

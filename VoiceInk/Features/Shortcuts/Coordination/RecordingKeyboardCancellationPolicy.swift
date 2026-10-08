@@ -33,8 +33,9 @@ struct RecordingKeyboardCancellationPolicy {
 
     private func isInvocationModifier(_ input: ShortcutMonitor.KeyboardInput, shortcuts: [Shortcut]) -> Bool {
         guard Shortcut.isModifierKeyCode(input.inputCode) else { return false }
-        let flags = Shortcut.normalizedModifierFlags(input.modifierFlags, forKeyCode: nil)
         return shortcuts.contains { shortcut in
+            let keyCode = shortcut.kind == .key ? shortcut.keyCode : nil
+            let flags = Shortcut.normalizedModifierFlags(input.modifierFlags, forKeyCode: keyCode)
             guard shortcut.modifierFlags.isSuperset(of: flags) else { return false }
             if shortcut.isModifierOnly && shortcut.keyCode != UInt16.max,
                 shortcut.keyCode != input.inputCode

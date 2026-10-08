@@ -250,6 +250,8 @@ class RecordingShortcutManager: ObservableObject {
         )
         guard shouldCancel else { return false }
         shortcutModeHandler.invalidateForKeyboardCancellation()
+        // Idle candidates only need input invalidation, not recorder cleanup.
+        guard recorderUIManager.isRecorderPanelVisible || engine.recordingState != .idle else { return true }
         guard !engine.shouldCancelRecording else { return true }
 
         engine.requestRecordingCancellation()
@@ -573,7 +575,13 @@ final class RecordingShortcutModeHandler {
         lastShortcutPressTime = nil
     }
 
-    var hasPendingInvocation: Bool { !pendingShortcutActions.isEmpty }
+    var hasPendingInvocation: Bool {
+        if isShortcutPressed || !pendingShortcutActions.isEmpty { return true }
+        let now = ProcessInfo.processInfo.systemUptime
+        return pendingDoubleTapReleaseTimes.values.contains {
+            now >= $0 && now - $0 <= doubleTapThreshold
+        }
+    }
 
     func registerPendingShortcutDown(action: ShortcutAction) -> UInt64 {
         pendingShortcutActions.insert(action)

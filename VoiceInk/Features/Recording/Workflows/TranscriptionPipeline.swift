@@ -276,7 +276,7 @@ class TranscriptionPipeline {
             return
         }
 
-        await delivery.deliver(
+        let pasteResult = await delivery.deliver(
             TranscriptionDelivery.Request(
                 transcription: transcription,
                 text: finalText,
@@ -296,7 +296,7 @@ class TranscriptionPipeline {
             )
         )
 
-        if shouldCancel() {
+        if shouldCancel() && !pasteResult.didPostPasteCommand {
             await finishCanceledTranscription()
             return
         }
